@@ -115,6 +115,12 @@ Chronological. Each entry: context → decision → consequences. Treat these as
 **Decision**: One shared component (`components/ui/phone-input.tsx`) wrapping `react-phone-number-input`, applied to all six phone fields (Customer, Register signup, Team member, Business create/edit, Settings profile) — not just the new Customer field, per Victor's explicit "every phone field" scope choice. Validation (`isValidPhoneNumber`, from the same underlying `libphonenumber-js` library on both frontend and backend) replaced every ad hoc length check.
 **Consequences**: Any future phone field should reuse this component and validator rather than a plain `Input` — the inconsistency this replaced (some required, some not, none actually validated) shouldn't reappear piecemeal.
 
+## ADR-21: Ecommerce-inventory-software feature checklist evaluated, adopted selectively (2026-08-07)
+
+**Context**: Victor shared a general ecommerce-inventory-management feature checklist plus Fishbowl's blog post, asking where VAE Inventory falls short of "the best in the world" and wanting a plan to close the gap.
+**Decision**: Full analysis in `gap-analysis-2026-08.md`. Most of that checklist targets multi-channel ecommerce sellers, manufacturers, and 3PL warehouses — business shapes VAE Inventory's actual users (a small, in-person, physical retail/wholesale shop) don't have. Explicitly **not adopted**: multi-channel sync (Shopify/Amazon/eBay), 3PL/shipping/carrier integration, manufacturing (BOM/work orders/MRP), EDI. The genuinely transferable core — cost/profitability tracking, barcode scanning, returns/stock-adjustment workflows, supplier/purchase-order management, and sales-velocity-based reorder suggestions — was scoped into new Phases G through K.
+**Consequences**: A future session (or a future pasted feature list from elsewhere on the web) should run through the same filter — "does this solve a problem VAE Inventory's actual users have?" — before adding a phase for it, rather than treating a generic SaaS feature checklist as a requirements document. This is the same discipline ADR-1 already established for infrastructure; this ADR extends it to product features.
+
 ## ADR-20: GitHub repo and Vercel project renamed to `vae-inventory` (2026-08-06)
 
 **Context**: Repo was still named `Business_WebApp` (a placeholder name); Victor wanted the live demo URL to read `vae-inventory.vercel.app`.
