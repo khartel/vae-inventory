@@ -40,8 +40,15 @@ function ProductList({ items, currency, metric }: { items: ProductReportItem[]; 
               {t("{{quantity}} {{unit}} in stock", { quantity: row.currentStock.total, unit: row.product.unit })}
             </p>
           </div>
-          <span className="font-medium">
-            {metric === "revenue" ? formatMoney(row.totalRevenue, currency) : `${row.totalQuantity} ${row.product.unit}`}
+          <span className="text-right">
+            <span className="block font-medium">
+              {metric === "revenue" ? formatMoney(row.totalRevenue, currency) : `${row.totalQuantity} ${row.product.unit}`}
+            </span>
+            {metric === "revenue" && (
+              <span className="block text-xs text-muted-foreground">
+                {t("Profit")}: {formatMoney(row.totalProfit, currency)}
+              </span>
+            )}
           </span>
         </li>
       ))}
@@ -75,11 +82,12 @@ export function ProductReportTab() {
       ["Product report", `${report.startDate} to ${report.endDate}`],
       ["Currency", currency],
       [],
-      ["Product", "Quantity sold", "Revenue", "Avg unit price", "Current stock"],
+      ["Product", "Quantity sold", "Revenue", "Profit", "Avg unit price", "Current stock"],
       ...report.bestSelling.map((row) => [
         row.product.name,
         `${row.totalQuantity} ${row.product.unit}`,
         row.totalRevenue,
+        row.hasIncompleteCostData ? `${row.totalProfit} (incomplete cost data)` : row.totalProfit,
         row.avgUnitPrice,
         `${row.currentStock.total} ${row.product.unit}`,
       ]),
@@ -96,11 +104,12 @@ export function ProductReportTab() {
       dateLine: `${report.startDate} to ${report.endDate}`,
       sections: [
         {
-          head: ["Product", "Quantity sold", "Revenue", "Avg unit price", "Current stock"],
+          head: ["Product", "Quantity sold", "Revenue", "Profit", "Avg unit price", "Current stock"],
           body: report.bestSelling.map((row) => [
             row.product.name,
             `${row.totalQuantity} ${row.product.unit}`,
             formatMoney(row.totalRevenue, currency),
+            formatMoney(row.totalProfit, currency),
             formatMoney(row.avgUnitPrice, currency),
             `${row.currentStock.total} ${row.product.unit}`,
           ]),

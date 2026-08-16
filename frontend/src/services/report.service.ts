@@ -19,9 +19,22 @@ interface ProductRef {
   description?: string | null
 }
 
+// Cost/profit figures alongside a revenue total (Phase G, 2026-08-16).
+// SuperAdmin/Admin only - Reports as a whole are already gated to those
+// roles server-side, so this never reaches an Employee. `totalCost`/
+// `totalProfit` only ever reflect items with a recorded cost price -
+// `hasIncompleteCostData` flags when some of the underlying sales involved
+// a product with no cost price, so the UI can show a caveat instead of a
+// misleadingly precise (and understated-cost) number.
+export interface CostProfit {
+  totalCost: number
+  totalProfit: number
+  hasIncompleteCostData: boolean
+}
+
 // Aggregate sales totals for a reporting period, split by payment method.
 // `bestDay`/`avgDailySales` only appear on multi-day reports (weekly/monthly).
-export interface PeriodSummary {
+export interface PeriodSummary extends CostProfit {
   totalAmount: number
   totalTransactions: number
   cashTotal: number
@@ -31,7 +44,7 @@ export interface PeriodSummary {
 }
 
 // Sales performance for a single product within a reporting period.
-export interface ProductBreakdown {
+export interface ProductBreakdown extends CostProfit {
   product: ProductRef
   totalQuantity: number
   totalRevenue: number
@@ -39,7 +52,7 @@ export interface ProductBreakdown {
 }
 
 // Sales performance for a single employee within a reporting period.
-export interface EmployeeBreakdown {
+export interface EmployeeBreakdown extends CostProfit {
   employee: Employee
   totalAmount: number
   transactionCount: number
@@ -70,7 +83,7 @@ export interface DailyReport {
 }
 
 // One day's totals within a multi-day breakdown list.
-export interface DailyBreakdownEntry {
+export interface DailyBreakdownEntry extends CostProfit {
   date: string
   dayName: string
   totalAmount: number
@@ -108,7 +121,7 @@ export interface EmployeeReport {
   employees: Array<{
     employee: Employee
     businessRole: string
-    summary: { totalAmount: number; transactionCount: number; cashTotal: number; transferTotal: number }
+    summary: CostProfit & { totalAmount: number; transactionCount: number; cashTotal: number; transferTotal: number }
     topProducts: ProductBreakdown[]
     transactions: ReportTransaction[]
   }>

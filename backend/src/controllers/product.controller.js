@@ -21,13 +21,14 @@ const asyncHandler = require("../utils/asyncHandler");
  * that. Returns the created product.
  */
 const create = asyncHandler(async (req, res) => {
-  const { name, unit, price, description, shortCode, units } = req.body;
+  const { name, unit, price, costPrice, description, shortCode, units } = req.body;
 
   const product = await createProduct({
     businessId: req.params.businessId,
     name,
     unit,
     price,
+    costPrice,
     description,
     shortCode,
     units,
@@ -45,7 +46,8 @@ const create = asyncHandler(async (req, res) => {
  * Lists every product in the business's catalog.
  */
 const getAll = asyncHandler(async (req, res) => {
-  const products = await getProducts(req.params.businessId);
+  const includeCostPrice = ["SUPERADMIN", "ADMIN"].includes(req.businessRole);
+  const products = await getProducts(req.params.businessId, { includeCostPrice });
 
   return sendSuccess(res, {
     message: "Products fetched successfully",
@@ -58,9 +60,11 @@ const getAll = asyncHandler(async (req, res) => {
  * Fetches a single product's details by id, scoped to the business.
  */
 const getOne = asyncHandler(async (req, res) => {
+  const includeCostPrice = ["SUPERADMIN", "ADMIN"].includes(req.businessRole);
   const product = await getProductById(
     req.params.productId,
-    req.params.businessId
+    req.params.businessId,
+    { includeCostPrice }
   );
 
   return sendSuccess(res, {
@@ -75,12 +79,12 @@ const getOne = asyncHandler(async (req, res) => {
  * shortCode). Returns the updated product.
  */
 const update = asyncHandler(async (req, res) => {
-  const { name, unit, price, description, shortCode, units } = req.body;
+  const { name, unit, price, costPrice, description, shortCode, units } = req.body;
 
   const product = await updateProduct(
     req.params.productId,
     req.params.businessId,
-    { name, unit, price, description, shortCode, units }
+    { name, unit, price, costPrice, description, shortCode, units }
   );
 
   return sendSuccess(res, {

@@ -23,6 +23,41 @@ const buildDateRange = (startDate, endDate) => {
 };
 
 /**
+ * Sums cost and profit for a flat array of TransactionItems. An item with no
+ * `costPrice` snapshot (the product had no cost price recorded at sale time)
+ * is excluded from *both* the revenue and cost sums here, not just the cost
+ * sum - `totalProfit` must only ever be revenue-minus-cost over the exact
+ * same subset of items, or it would silently count an uncosted item's full
+ * revenue as pure profit (overstating it) the moment any sale in the set
+ * lacks cost data. `hasIncompleteCostData` flags when that happened, so the
+ * frontend can show a caveat instead of a misleadingly precise number - it
+ * does NOT mean "some revenue is missing," only "some cost is unknown."
+ *
+ * @param {Array<{subtotal: number, costPrice: number|null, quantitySold: number}>} items
+ * @returns {{totalCost: number, totalProfit: number, hasIncompleteCostData: boolean}}
+ */
+const computeCostProfit = (items) => {
+  let costKnownRevenue = 0;
+  let totalCost = 0;
+  let hasIncompleteCostData = false;
+
+  for (const item of items) {
+    if (item.costPrice != null) {
+      costKnownRevenue += item.subtotal;
+      totalCost += item.costPrice * item.quantitySold;
+    } else {
+      hasIncompleteCostData = true;
+    }
+  }
+
+  return {
+    totalCost,
+    totalProfit: costKnownRevenue - totalCost,
+    hasIncompleteCostData,
+  };
+};
+
+/**
  * Daily Report — full breakdown of a single day's sales: overall totals,
  * a cash-vs-transfer split, and per-employee and per-product breakdowns
  * (each built by grouping the day's transactions in memory with a map
@@ -123,14 +158,27 @@ const getDailyReport = async (businessId, date) => {
           product: item.product,
           totalQuantity: 0,
           totalRevenue: 0,
+          totalCost: 0,
+          totalProfit: 0,
+          hasIncompleteCostData: false,
           timesSold: 0,
         };
       }
       productMap[key].totalQuantity += item.quantitySold;
       productMap[key].totalRevenue += item.subtotal;
+      if (item.costPrice != null) {
+        const cost = item.costPrice * item.quantitySold;
+        productMap[key].totalCost += cost;
+        productMap[key].totalProfit += item.subtotal - cost;
+      } else {
+        productMap[key].hasIncompleteCostData = true;
+      }
       productMap[key].timesSold += 1;
     });
   });
+
+  const allItems = transactions.flatMap((t) => t.items);
+  const dayCostProfit = computeCostProfit(allItems);
 
   return {
     date: format(targetDate, "yyyy-MM-dd"),
@@ -141,11 +189,15 @@ const getDailyReport = async (businessId, date) => {
       cashTransactions: cashTransactions.length,
       transferTotal,
       transferTransactions: transferTransactions.length,
+      ...dayCostProfit,
     },
     transactions,
-    byEmployee: Object.values(employeeMap).sort(
-      (a, b) => b.totalAmount - a.totalAmount
-    ),
+    byEmployee: Object.values(employeeMap)
+      .map((entry) => ({
+        ...entry,
+        ...computeCostProfit(entry.transactions.flatMap((t) => t.items)),
+      }))
+      .sort((a, b) => b.totalAmount - a.totalAmount),
     byProduct: Object.values(productMap).sort(
       (a, b) => b.totalRevenue - a.totalRevenue
     ),
@@ -220,6 +272,7 @@ const getWeeklyReport = async (businessId, date) => {
       transferTotal: dayTransactions
         .filter((t) => t.paymentMethod === "TRANSFER")
         .reduce((sum, t) => sum + t.totalAmount, 0),
+      ...computeCostProfit(dayTransactions.flatMap((t) => t.items)),
     };
   });
 
@@ -242,10 +295,12 @@ const getWeeklyReport = async (businessId, date) => {
         employee: t.performedBy,
         totalAmount: 0,
         transactionCount: 0,
+        items: [],
       };
     }
     employeeMap[key].totalAmount += t.totalAmount;
     employeeMap[key].transactionCount += 1;
+    employeeMap[key].items.push(...t.items);
   });
 
   // By product for the week
@@ -258,10 +313,20 @@ const getWeeklyReport = async (businessId, date) => {
           product: item.product,
           totalQuantity: 0,
           totalRevenue: 0,
+          totalCost: 0,
+          totalProfit: 0,
+          hasIncompleteCostData: false,
         };
       }
       productMap[key].totalQuantity += item.quantitySold;
       productMap[key].totalRevenue += item.subtotal;
+      if (item.costPrice != null) {
+        const cost = item.costPrice * item.quantitySold;
+        productMap[key].totalCost += cost;
+        productMap[key].totalProfit += item.subtotal - cost;
+      } else {
+        productMap[key].hasIncompleteCostData = true;
+      }
     });
   });
 
@@ -278,11 +343,12 @@ const getWeeklyReport = async (businessId, date) => {
         .filter((t) => t.paymentMethod === "TRANSFER")
         .reduce((sum, t) => sum + t.totalAmount, 0),
       bestDay,
+      ...computeCostProfit(transactions.flatMap((t) => t.items)),
     },
     dailyBreakdown,
-    byEmployee: Object.values(employeeMap).sort(
-      (a, b) => b.totalAmount - a.totalAmount
-    ),
+    byEmployee: Object.values(employeeMap)
+      .map(({ items, ...entry }) => ({ ...entry, ...computeCostProfit(items) }))
+      .sort((a, b) => b.totalAmount - a.totalAmount),
     byProduct: Object.values(productMap).sort(
       (a, b) => b.totalRevenue - a.totalRevenue
     ),
@@ -357,6 +423,7 @@ const getMonthlyReport = async (businessId, year, month) => {
       dayName: format(day, "EEE"),
       totalAmount: dayTransactions.reduce((sum, t) => sum + t.totalAmount, 0),
       transactionCount: dayTransactions.length,
+      ...computeCostProfit(dayTransactions.flatMap((t) => t.items)),
     };
   });
 
@@ -384,10 +451,12 @@ const getMonthlyReport = async (businessId, year, month) => {
         transactionCount: 0,
         cashAmount: 0,
         transferAmount: 0,
+        items: [],
       };
     }
     employeeMap[key].totalAmount += t.totalAmount;
     employeeMap[key].transactionCount += 1;
+    employeeMap[key].items.push(...t.items);
 
     if (t.paymentMethod === "CASH") {
       employeeMap[key].cashAmount += t.totalAmount;
@@ -406,11 +475,21 @@ const getMonthlyReport = async (businessId, year, month) => {
           product: item.product,
           totalQuantity: 0,
           totalRevenue: 0,
+          totalCost: 0,
+          totalProfit: 0,
+          hasIncompleteCostData: false,
           timesSold: 0,
         };
       }
       productMap[key].totalQuantity += item.quantitySold;
       productMap[key].totalRevenue += item.subtotal;
+      if (item.costPrice != null) {
+        const cost = item.costPrice * item.quantitySold;
+        productMap[key].totalCost += cost;
+        productMap[key].totalProfit += item.subtotal - cost;
+      } else {
+        productMap[key].hasIncompleteCostData = true;
+      }
       productMap[key].timesSold += 1;
     });
   });
@@ -430,11 +509,12 @@ const getMonthlyReport = async (businessId, year, month) => {
         .filter((t) => t.paymentMethod === "TRANSFER")
         .reduce((sum, t) => sum + t.totalAmount, 0),
       bestDay,
+      ...computeCostProfit(transactions.flatMap((t) => t.items)),
     },
     dailyBreakdown,
-    byEmployee: Object.values(employeeMap).sort(
-      (a, b) => b.totalAmount - a.totalAmount
-    ),
+    byEmployee: Object.values(employeeMap)
+      .map(({ items, ...entry }) => ({ ...entry, ...computeCostProfit(items) }))
+      .sort((a, b) => b.totalAmount - a.totalAmount),
     byProduct: Object.values(productMap).sort(
       (a, b) => b.totalRevenue - a.totalRevenue
     ),
@@ -525,10 +605,20 @@ const getEmployeeReport = async (businessId, startDate, endDate) => {
             product: item.product,
             totalQuantity: 0,
             totalRevenue: 0,
+            totalCost: 0,
+            totalProfit: 0,
+            hasIncompleteCostData: false,
           };
         }
         productMap[key].totalQuantity += item.quantitySold;
         productMap[key].totalRevenue += item.subtotal;
+        if (item.costPrice != null) {
+          const cost = item.costPrice * item.quantitySold;
+          productMap[key].totalCost += cost;
+          productMap[key].totalProfit += item.subtotal - cost;
+        } else {
+          productMap[key].hasIncompleteCostData = true;
+        }
       });
     });
 
@@ -540,6 +630,7 @@ const getEmployeeReport = async (businessId, startDate, endDate) => {
         transactionCount: memberTransactions.length,
         cashTotal,
         transferTotal,
+        ...computeCostProfit(memberTransactions.flatMap((t) => t.items)),
       },
       topProducts: Object.values(productMap).sort(
         (a, b) => b.totalRevenue - a.totalRevenue
@@ -607,6 +698,9 @@ const getProductReport = async (businessId, startDate, endDate) => {
         product: item.product,
         totalQuantity: 0,
         totalRevenue: 0,
+        totalCost: 0,
+        totalProfit: 0,
+        hasIncompleteCostData: false,
         timesSold: 0,
         avgUnitPrice: 0,
         prices: [],
@@ -614,6 +708,13 @@ const getProductReport = async (businessId, startDate, endDate) => {
     }
     productMap[key].totalQuantity += item.quantitySold;
     productMap[key].totalRevenue += item.subtotal;
+    if (item.costPrice != null) {
+      const cost = item.costPrice * item.quantitySold;
+      productMap[key].totalCost += cost;
+      productMap[key].totalProfit += item.subtotal - cost;
+    } else {
+      productMap[key].hasIncompleteCostData = true;
+    }
     productMap[key].timesSold += 1;
     productMap[key].prices.push(item.unitPrice);
   });

@@ -150,6 +150,11 @@ model Product {
   name        String
   unit        String
   price       Float     @default(0)
+  // What this product actually costs the business, distinct from `price`
+  // (what it sells for). Null means no cost data recorded - a permanent,
+  // legitimate state (not every product's cost is tracked), never treated
+  // as zero. SUPERADMIN/ADMIN only - see product.service.js's includeCostPrice.
+  costPrice   Float?
   description String?
   shortCode   String?
   // Soft-delete: hidden from the catalog/POS/pickers when set, but past
@@ -287,6 +292,10 @@ model TransactionItem {
   unitPrice       Float
   subtotal        Float
   discountPercent Float?
+  // Snapshot of Product.costPrice at time of sale (base-unit terms, same as
+  // unitPrice) - null if the product had no cost price recorded then. Never
+  // rewritten by a later cost-price edit, same reasoning as unitPrice/unitLabel.
+  costPrice       Float?
   // Display-only: the pack size actually rung up (e.g. "dozen" x 2), when
   // it wasn't the product's base unit. quantitySold/unitPrice/subtotal
   // above are always in base-unit terms regardless of what's shown here.

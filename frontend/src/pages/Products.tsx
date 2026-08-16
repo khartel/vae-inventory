@@ -138,6 +138,7 @@ export default function Products() {
                     <TableHead>{t("Code")}</TableHead>
                     <TableHead>{t("Unit")}</TableHead>
                     <TableHead>{t("Price")}</TableHead>
+                    {canEdit && <TableHead>{t("Margin")}</TableHead>}
                     <TableHead>{t("Total stock")}</TableHead>
                     <TableHead className="text-right">{t("Actions")}</TableHead>
                   </TableRow>
@@ -170,6 +171,13 @@ export default function Products() {
                         <TableCell className="text-muted-foreground">
                           {formatMoney(product.price, currency)}
                         </TableCell>
+                        {canEdit && (
+                          <TableCell className="text-muted-foreground">
+                            {product.costPrice != null && product.price > 0
+                              ? `${Math.round((1 - product.costPrice / product.price) * 100)}%`
+                              : "—"}
+                          </TableCell>
+                        )}
                         <TableCell>
                           <div className="flex items-center gap-2">
                             {product.totalQuantity} {product.unit}

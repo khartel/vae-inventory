@@ -32,6 +32,11 @@ export interface Product {
   name: string
   unit: string
   price: number
+  // Absent entirely (not null) when the caller is an Employee - the backend
+  // strips it rather than sending null, so cost/margin data never appears
+  // in the network response for a role that shouldn't see it. SuperAdmin/
+  // Admin get either a number or null (no cost price recorded yet).
+  costPrice?: number | null
   description: string | null
   shortCode: string | null
   createdAt: string
@@ -49,6 +54,7 @@ export interface CreateProductInput {
   name: string
   unit: string
   price?: number
+  costPrice?: number
   description?: string
   shortCode?: string
   units?: Array<{ label: string; factor: number }>

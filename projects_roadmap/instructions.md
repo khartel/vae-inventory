@@ -31,6 +31,13 @@ See `phase-00-analysis.md` §1 for the full domain model (SuperAdmin/Business/Wa
 - **Frontend**: TypeScript, React Hook Form + zod (`z.input`/`z.output` generic split when a schema uses `z.coerce`), TanStack Query, shadcn/ui on Radix primitives. Session auth lives **only** in the httpOnly cookie — never touch or store the token in frontend JS/localStorage.
 - **i18n key convention**: every user-facing string is wrapped `t("Exact English Sentence")` — the English text is the key. Don't invent a parallel key-naming scheme. Missing French entries gracefully fall back to English via i18next's `defaultValue`, never a blank string or crash.
 
+## Two schema-change gotchas that have each bitten this project twice
+
+After any `prisma migrate dev` (or hand-edited migration), do both of these before trusting anything works — skipping either produces a confusing failure that looks like a code bug but isn't:
+
+1. **Restart the dev backend process.** `nodemon` watches source files, not `node_modules` — a regenerated Prisma Client on disk is invisible to an already-running process until it's killed and restarted (`Get-NetTCPConnection -LocalPort 5000 -State Listen | Stop-Process`, then `npm run dev` again).
+2. **Run `npm run test:migrate`.** The Jest test database (`*_test`) is completely separate from the dev database and does not get migrated automatically — it silently drifts behind, and a test that touches the changed model fails with a real, confusing Prisma error (`Unknown argument`) that has nothing to do with the test itself. This has already caused a test-suite regression to go unnoticed across an entire feature batch before being caught by the next one's test run.
+
 ## Verification discipline (non-negotiable for this project)
 
 Every feature batch in this project's history was verified live, not just "should work":
@@ -48,6 +55,7 @@ Every feature batch in this project's history was verified live, not just "shoul
 ## Where things live now
 
 - `projects_roadmap/phase-00-analysis.md` — deep architectural analysis (read this for "how does this app actually work").
+- `projects_roadmap/gap-analysis-2026-08.md` — comparison against general ecommerce-inventory-software feature checklists, and which of those ideas actually apply to this business (most don't — see ADR-21). Read before proposing a new feature sourced from "what other inventory tools do."
 - `projects_roadmap/architecture.md` — target production architecture and the reasoning behind each choice.
 - `projects_roadmap/phases/` — one file per phase, in order. All of Phase A–D are done; Phase E (deployment) is partially done (a free-tier test deploy is live — see below); Phase F hasn't started.
 - `projects_roadmap/todo.md` — what's actually still open, right now.

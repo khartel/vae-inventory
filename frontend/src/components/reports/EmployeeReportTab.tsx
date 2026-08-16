@@ -57,7 +57,7 @@ export function EmployeeReportTab() {
       ["Employee report", `${report.startDate} to ${report.endDate}`],
       ["Currency", currency],
       [],
-      ["Employee", "Role", "Total", "Transactions", "Cash", "Transfer"],
+      ["Employee", "Role", "Total", "Transactions", "Cash", "Transfer", "Profit"],
       ...report.employees.map((e) => [
         e.employee.fullName,
         e.businessRole,
@@ -65,6 +65,7 @@ export function EmployeeReportTab() {
         e.summary.transactionCount,
         e.summary.cashTotal,
         e.summary.transferTotal,
+        e.summary.hasIncompleteCostData ? `${e.summary.totalProfit} (incomplete cost data)` : e.summary.totalProfit,
       ]),
     ])
   }
@@ -79,7 +80,7 @@ export function EmployeeReportTab() {
       dateLine: `${report.startDate} to ${report.endDate}`,
       sections: [
         {
-          head: ["Employee", "Role", "Total", "Transactions", "Cash", "Transfer"],
+          head: ["Employee", "Role", "Total", "Transactions", "Cash", "Transfer", "Profit"],
           body: report.employees.map((e) => [
             e.employee.fullName,
             e.businessRole,
@@ -87,6 +88,7 @@ export function EmployeeReportTab() {
             e.summary.transactionCount,
             formatMoney(e.summary.cashTotal, currency),
             formatMoney(e.summary.transferTotal, currency),
+            formatMoney(e.summary.totalProfit, currency),
           ]),
         },
       ],
@@ -150,7 +152,7 @@ export function EmployeeReportTab() {
                 </div>
                 <p className="text-right font-medium">{formatMoney(summary.totalAmount, currency)}</p>
               </div>
-              <div className="mb-3 grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="mb-3 grid grid-cols-4 gap-2 text-center text-xs">
                 <div>
                   <p className="font-semibold">{summary.transactionCount}</p>
                   <p className="text-muted-foreground">{t("Sales")}</p>
@@ -163,7 +165,16 @@ export function EmployeeReportTab() {
                   <p className="font-semibold">{formatMoney(summary.transferTotal, currency)}</p>
                   <p className="text-muted-foreground">{t("Transfer")}</p>
                 </div>
+                <div>
+                  <p className="font-semibold">{formatMoney(summary.totalProfit, currency)}</p>
+                  <p className="text-muted-foreground">{t("Profit")}</p>
+                </div>
               </div>
+              {summary.hasIncompleteCostData && (
+                <p className="mb-3 text-xs text-muted-foreground">
+                  {t("Profit figure is incomplete — some sold products have no cost price set.")}
+                </p>
+              )}
               {topProducts.length > 0 && (
                 <div className="mb-3">
                   <p className="mb-1 text-xs font-medium text-muted-foreground">{t("Top products")}</p>

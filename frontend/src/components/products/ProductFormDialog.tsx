@@ -85,6 +85,23 @@ const schema = z
     name: z.string().trim().min(1, "Product name is required"),
     unit: z.string().trim().min(1, "Unit is required (e.g. pcs, kg, box)"),
     price: z.coerce.number().min(0, "Price cannot be negative"),
+    // Optional and SuperAdmin/Admin-only (this whole dialog only ever opens
+    // for those roles - see Products.tsx's canManage gate). What the
+    // business pays for this product, distinct from the selling `price`.
+    // Same blank-means-unset string->number transform as pcsPerContainer below.
+    costPrice: z
+      .string()
+      .trim()
+      .optional()
+      .transform((val, ctx) => {
+        if (!val) return undefined
+        const parsed = Number(val)
+        if (!Number.isFinite(parsed) || parsed < 0) {
+          ctx.addIssue({ code: "custom", message: "Cost price cannot be negative" })
+          return z.NEVER
+        }
+        return parsed
+      }),
     description: z.string().trim().optional(),
     shortCode: z.string().trim().max(20, "Keep it to 20 characters or fewer").optional(),
     // Alternate pack sizes - bigger (e.g. "dozen" = 12 base units, factor
@@ -185,6 +202,7 @@ export function ProductFormDialog({ product }: { product?: Product }) {
       name: product?.name ?? "",
       unit: product?.unit ?? "",
       price: product?.price ?? 0,
+      costPrice: product?.costPrice != null ? String(product.costPrice) : "",
       description: product?.description ?? "",
       shortCode: product?.shortCode ?? "",
       // When the base unit is a container, a "pcs" entry (if present) is
@@ -352,6 +370,15 @@ export function ProductFormDialog({ product }: { product?: Product }) {
               <Input id="prod-price" type="number" step="0.01" min="0" {...register("price")} />
               {errors.price?.message && <p className="text-xs text-destructive">{t(errors.price.message)}</p>}
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="prod-cost-price">{t("Cost price (optional)")}</Label>
+            <Input id="prod-cost-price" type="number" step="0.01" min="0" {...register("costPrice")} />
+            <p className="text-xs text-muted-foreground">
+              {t("What this costs you. Only visible to you and other managers - never shown to Employees or on receipts.")}
+            </p>
+            {errors.costPrice?.message && <p className="text-xs text-destructive">{t(errors.costPrice.message)}</p>}
           </div>
           {isContainerUnit && (
             <div className="space-y-1.5">

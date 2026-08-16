@@ -71,6 +71,9 @@ const assertUnitsValid = (baseUnit, units) => {
  * @param {string} params.name - Must be unique within the business.
  * @param {string} params.unit - Unit of measure (e.g. "kg", "pcs").
  * @param {number|string} [params.price] - Parsed to a float; defaults to 0.
+ * @param {number|string} [params.costPrice] - What the business pays for this
+ *   product, distinct from `price`. Left null if not given - never defaulted
+ *   to 0, since that would misrepresent an untracked cost as a known one.
  * @param {string} [params.description]
  * @param {string} [params.shortCode] - Optional fast-lookup code, must be unique.
  * @param {Array<{label: string, factor: number}>} [params.units] - Optional
@@ -79,7 +82,7 @@ const assertUnitsValid = (baseUnit, units) => {
  * @returns {Promise<object>} The created product including its (empty) stock relation.
  * @throws {AppError} 409 if the name or short code is already taken.
  */
-const createProduct = async ({ businessId, name, unit, price, description, shortCode, units }) => {
+const createProduct = async ({ businessId, name, unit, price, costPrice, description, shortCode, units }) => {
   const existing = await prisma.product.findFirst({
     where: {
       businessId,
@@ -101,6 +104,7 @@ const createProduct = async ({ businessId, name, unit, price, description, short
       name,
       unit,
       price: price ? parseFloat(price) : 0,
+      costPrice: costPrice !== undefined ? parseFloat(costPrice) : undefined,
       description,
       shortCode,
       units: units && units.length > 0 ? { create: units } : undefined,
@@ -135,9 +139,13 @@ const createProduct = async ({ businessId, name, unit, price, description, short
  * about the rule themselves.
  *
  * @param {string} businessId
+ * @param {{includeCostPrice?: boolean}} [options] - `costPrice` is stripped
+ *   from every product unless this is true (only SUPERADMIN/ADMIN callers
+ *   should ever pass it - see product.controller.js), since Employees can
+ *   list products too (POS search) but must never see cost/margin data.
  * @returns {Promise<object[]>} Products ordered alphabetically by name.
  */
-const getProducts = async (businessId) => {
+const getProducts = async (businessId, { includeCostPrice = false } = {}) => {
   const [products, thresholdSettings] = await Promise.all([
     prisma.product.findMany({
       where: { businessId, deletedAt: null },
@@ -166,8 +174,9 @@ const getProducts = async (businessId) => {
       ...s,
       lowStockThreshold: resolveLowStockThreshold(s.lowStockThreshold, product.unit, thresholdSettings),
     }));
+    const { costPrice, ...productWithoutCost } = product;
     return {
-      ...product,
+      ...(includeCostPrice ? product : productWithoutCost),
       stock,
       totalQuantity: stock.reduce((sum, s) => sum + s.quantity, 0),
       primaryStock: stock.find((s) => s.warehouse.isPrimary) || null,
@@ -184,10 +193,11 @@ const getProducts = async (businessId) => {
  *
  * @param {string} productId
  * @param {string} businessId - Scopes the lookup to this business.
+ * @param {{includeCostPrice?: boolean}} [options] - See `getProducts`.
  * @returns {Promise<object>} The product with stock and recent transaction items.
  * @throws {AppError} 404 if not found in this business.
  */
-const getProductById = async (productId, businessId) => {
+const getProductById = async (productId, businessId, { includeCostPrice = false } = {}) => {
   const [product, thresholdSettings] = await Promise.all([
     prisma.product.findFirst({
       where: {
@@ -242,8 +252,10 @@ const getProductById = async (productId, businessId) => {
     lowStockThreshold: resolveLowStockThreshold(s.lowStockThreshold, product.unit, thresholdSettings),
   }));
 
+  const { costPrice, ...productWithoutCost } = product;
+
   return {
-    ...product,
+    ...(includeCostPrice ? product : productWithoutCost),
     stock,
     totalQuantity: stock.reduce((sum, s) => sum + s.quantity, 0),
     primaryStock: stock.find((s) => s.warehouse.isPrimary) || null,
@@ -258,7 +270,7 @@ const getProductById = async (productId, businessId) => {
  *
  * @param {string} productId
  * @param {string} businessId - Scopes the lookup to this business.
- * @param {{name?: string, unit?: string, price?: number|string, description?: string, shortCode?: string, units?: Array<{label: string, factor: number}>}} fields
+ * @param {{name?: string, unit?: string, price?: number|string, costPrice?: number|string, description?: string, shortCode?: string, units?: Array<{label: string, factor: number}>}} fields
  *   `units`, when provided, wholesale-replaces the product's alternate pack
  *   sizes - safe because past sales/stock movements already have their own
  *   `unitLabel` denormalized onto them, so editing/removing a pack size
@@ -268,7 +280,7 @@ const getProductById = async (productId, businessId) => {
  *   with another product in the business; 400 if `units` collide with each
  *   other or with the base unit.
  */
-const updateProduct = async (productId, businessId, { name, unit, price, description, shortCode, units }) => {
+const updateProduct = async (productId, businessId, { name, unit, price, costPrice, description, shortCode, units }) => {
   const product = await prisma.product.findFirst({
     where: { id: productId, businessId, deletedAt: null },
   });
@@ -316,6 +328,7 @@ const updateProduct = async (productId, businessId, { name, unit, price, descrip
         ...(name && { name }),
         ...(unit && { unit }),
         ...(price !== undefined && { price: parseFloat(price) }),
+        ...(costPrice !== undefined && { costPrice: parseFloat(costPrice) }),
         ...(description !== undefined && { description }),
         ...(shortCode !== undefined && { shortCode }),
       },

@@ -141,6 +141,12 @@ const createTransaction = async ({
         productUnit: product.unit,
         quantitySold: item.quantitySold,
         unitPrice: item.unitPrice,
+        // Snapshotted so a later edit to the product's cost price never
+        // rewrites this sale's historical profit - same reasoning as
+        // productName/productUnit above. Null if the product has no cost
+        // price recorded (see report.service.js's computeCostProfit, which
+        // treats that as "unknown," never as a free/zero-cost item).
+        costPrice: product.costPrice,
         subtotal: item.quantitySold * item.unitPrice,
         discountPercent: item.discountPercent ?? null,
         unitLabel: item.unitLabel ?? null,
@@ -241,6 +247,7 @@ const createTransaction = async ({
             productId: item.productId,
             quantitySold: item.quantitySold,
             unitPrice: item.unitPrice,
+            costPrice: item.costPrice,
             subtotal: item.subtotal,
             discountPercent: item.discountPercent,
             unitLabel: item.unitLabel,
