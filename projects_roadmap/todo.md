@@ -1,5 +1,7 @@
 # Current backlog
 
+Latest UI work: login screen fits laptop/phone viewports; dashboard imagery has more depth and softer edge blending (2026-11-11). See `completed.md` for verification.
+
 Last reviewed: 2026-08-16. Grouped by phase — see `phases/` for the full context on each. Phases A–D have no open items. There are now two independent, parallel tracks: **Phase E** (finish deploying what's already built) and **Phases G–K** (a new feature-development track from the ecommerce-benchmark gap analysis, `gap-analysis-2026-08.md`). Neither blocks the other.
 
 ## Phases G–K — New feature track (from the 2026-08-07 gap analysis)
@@ -7,9 +9,9 @@ Last reviewed: 2026-08-16. Grouped by phase — see `phases/` for the full conte
 Recommended order (see each phase file for the full reasoning and dependencies):
 
 1. [x] **Phase G — Profitability & cost tracking** (`phases/phase-g-profitability-cost-tracking.md`) — **done 2026-08-16**, see `completed.md`. Cost price now exists on every product and flows through to a Profit figure across Reports, gated to SuperAdmin/Admin.
-2. [ ] **Phase H — Barcode scanning** (`phases/phase-h-barcode-scanning.md`). Independent of Phase G — biggest day-to-day usability win for the cashier at the register.
-3. [ ] **Phase I — Returns & stock adjustments** (`phases/phase-i-returns-stock-adjustments.md`). Two routine physical-retail operations (returns, cycle-count reconciliation) that don't exist yet.
-4. [ ] **Phase J — Purchasing & supplier management** (`phases/phase-j-purchasing-suppliers.md`). Now unblocked (Phase G's cost data exists) — real purchase orders should feed `Product.costPrice` rather than it only ever being hand-typed.
+2. [ ] **Phase H — Barcode scanning** (`phases/phase-h-barcode-scanning.md`). Deferred — not every business has a scanner; picked up again once Phase J/K or a real usability complaint makes it the priority.
+3. [x] **Phase I — Returns & stock adjustments** (`phases/phase-i-returns-stock-adjustments.md`) — **done 2026-08-16**, see `completed.md`. Sale returns (cash refund or credit-balance reduction) and cycle-count stock adjustments, both with a proper audit trail. Reports deliberately not netted for returns yet — Victor's call, revisit later.
+4. [ ] **Phase J — Purchasing & supplier management** (`phases/phase-j-purchasing-suppliers.md`). Unblocked (Phase G's cost data exists) — real purchase orders should feed `Product.costPrice` rather than it only ever being hand-typed.
 5. [ ] **Phase K — Smart reorder suggestions** (`phases/phase-k-smart-reorder-forecasting.md`). Deliberately last — needs Phase J (supplier lead times) plus enough real sales history to exist in the first place.
 
 Also flagged in the gap analysis but **not yet phased, revisit later**: offline-resilient POS (a real engineering investment, worth doing once G–K land and the Phase E hosting decision is settled). Explicitly **not planned** unless the business model changes: multi-channel ecommerce sync (Shopify/Amazon/eBay), manufacturing (BOM/work orders), 3PL/shipping, EDI, accounting-software integration — see `gap-analysis-2026-08.md` for why each doesn't apply to VAE Inventory's actual business today.

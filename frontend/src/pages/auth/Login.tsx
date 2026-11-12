@@ -3,13 +3,13 @@ import { useForm, Controller } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { Link, useLocation, useNavigate } from "react-router-dom"
-import { User, Lock, Loader2, ShieldCheck } from "lucide-react"
+import { ArrowRight, User, Lock, Loader2, ShieldCheck } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { useAuth } from "@/context/AuthContext"
 import { ApiError } from "@/lib/api-client"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { AuthShell } from "@/components/auth/AuthShell"
+import { LoginShell } from "@/components/auth/LoginShell"
 import { AuthField } from "@/components/auth/AuthField"
 
 const loginSchema = z.object({
@@ -30,7 +30,7 @@ type LoginValues = z.infer<typeof loginSchema>
  *    renders a second, separate form asking for the 6-digit authenticator
  *    code, submitted through `verifyTwoFactor()`.
  *
- * Both steps reuse the same `AuthShell` wrapper but are given different
+ * Both steps reuse the same `LoginShell` wrapper but are given different
  * `key` props ("credentials" vs "two-factor"). This is deliberate, not
  * decorative: without distinct keys, React would reconcile the two forms
  * as "the same" component across the state transition (since they render
@@ -99,7 +99,7 @@ export default function Login() {
 
   if (tempToken) {
     return (
-      <AuthShell
+      <LoginShell
         key="two-factor"
         title="Two-factor authentication"
         description="Enter the 6-digit code from your authenticator app"
@@ -121,7 +121,7 @@ export default function Login() {
 
           <Button
             type="submit"
-            className="w-full rounded-full bg-gradient-to-r from-primary to-success text-primary-foreground hover:opacity-90"
+            className="login-submit hover:opacity-90"
             disabled={verifying || code.length !== 6}
           >
             {verifying && <Loader2 className="size-4 animate-spin" />}
@@ -139,23 +139,16 @@ export default function Login() {
             {t("Back to sign in")}
           </button>
         </form>
-      </AuthShell>
+      </LoginShell>
     )
   }
 
   return (
-    <AuthShell
+    <LoginShell
       key="credentials"
       title="Welcome back"
       description="Sign in to manage your business"
-      footer={
-        <>
-          {t("Setting up a new business?")}{" "}
-          <Link to="/register" className="font-medium text-primary hover:underline">
-            {t("Create an account")}
-          </Link>
-        </>
-      }
+      showRegistration
     >
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
         <AuthField
@@ -177,7 +170,7 @@ export default function Login() {
           {...register("password")}
         />
 
-        <div className="flex items-center justify-between px-1">
+        <div className="login-options flex items-center justify-between px-1">
           <Controller
             control={control}
             name="rememberMe"
@@ -197,13 +190,14 @@ export default function Login() {
 
         <Button
           type="submit"
-          className="w-full rounded-full bg-gradient-to-r from-primary to-success text-primary-foreground hover:opacity-90"
+          className="login-submit hover:opacity-90"
           disabled={isSubmitting}
         >
           {isSubmitting && <Loader2 className="size-4 animate-spin" />}
           {t("Sign in")}
+          <ArrowRight className="size-5" aria-hidden="true" />
         </Button>
       </form>
-    </AuthShell>
+    </LoginShell>
   )
 }

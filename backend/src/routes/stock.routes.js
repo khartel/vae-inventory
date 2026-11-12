@@ -5,11 +5,17 @@ const {
   moveStockBetweenWarehouses,
   getMovements,
   receiveStockController,
+  adjustStockController,
 } = require("../controllers/product.controller");
 const { authenticate } = require("../middleware/auth.middleware");
 const { authorize, belongsToBusiness } = require("../middleware/role.middleware");
 const { validate } = require("../middleware/validate.middleware");
-const { moveStockSchema, receiveStockSchema, movementsQuerySchema } = require("../validators/stock.validators");
+const {
+  moveStockSchema,
+  receiveStockSchema,
+  movementsQuerySchema,
+  adjustStockSchema,
+} = require("../validators/stock.validators");
 
 // Mounted under /api/businesses/:businessId/stock. Handlers live in
 // product.controller.js (stock is tracked per product/warehouse, not as
@@ -39,6 +45,12 @@ router.post(
   authorize("SUPERADMIN", "ADMIN"),
   validate(receiveStockSchema),
   receiveStockController
+);
+router.post(
+  "/adjust",
+  authorize("SUPERADMIN", "ADMIN"),
+  validate(adjustStockSchema),
+  adjustStockController
 );
 
 module.exports = router;

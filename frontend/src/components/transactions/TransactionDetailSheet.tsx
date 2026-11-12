@@ -1,9 +1,13 @@
+import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Printer } from "lucide-react"
+import { Printer, Undo2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import * as transactionService from "@/services/transaction.service"
+import { useAuth } from "@/context/AuthContext"
 import { useActiveBusiness } from "@/hooks/useActiveBusiness"
+import { canManage } from "@/lib/permissions"
 import { formatDate, formatDateTime, formatMoney } from "@/lib/format"
+import { ReturnDialog } from "@/components/transactions/ReturnDialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -54,8 +58,10 @@ export function TransactionDetailSheet({
   onOpenChange: (open: boolean) => void
 }) {
   const { t } = useTranslation()
+  const { user } = useAuth()
   const activeBusiness = useActiveBusiness()
   const currency = activeBusiness?.currency ?? "USD"
+  const [returnDialogOpen, setReturnDialogOpen] = useState(false)
 
   const transactionQuery = useQuery({
     queryKey: ["transaction", businessId, transactionId],
@@ -69,7 +75,21 @@ export function TransactionDetailSheet({
   // omit the Billed To block entirely, rather than printing a placeholder.
   const hasCustomerName = !!transaction?.customerName && transaction.customerName !== "Casual Customer"
 
+  // Whether any item on this sale still has quantity left to return - same
+  // computation ReturnDialog does per-row, just collapsed to a single flag
+  // to decide whether "Process return" should even be offered.
+  const hasReturnableItems =
+    !!transaction &&
+    transaction.items.some((item) => {
+      const alreadyReturned = transaction.returns
+        .flatMap((r) => r.items)
+        .filter((ri) => ri.transactionItemId === item.id)
+        .reduce((sum, ri) => sum + ri.quantityReturned, 0)
+      return item.quantitySold - alreadyReturned > 0.0001
+    })
+
   return (
+    <>
     <Dialog open={!!transactionId} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader className="print:hidden">
@@ -235,6 +255,30 @@ export function TransactionDetailSheet({
                   </div>
                 )}
 
+                {transaction.returns.length > 0 && (
+                  <div className="mt-4">
+                    <p className="mb-1.5 text-xs font-semibold tracking-wide text-slate-500 uppercase">
+                      {t("Returns")}
+                    </p>
+                    <ul className="space-y-1.5 text-sm">
+                      {transaction.returns.map((ret) => (
+                        <li key={ret.id} className="flex items-start justify-between gap-2 text-slate-500">
+                          <span>
+                            {formatDateTime(ret.createdAt)} · {ret.processedBy.fullName}
+                            {ret.reason && <span className="block text-xs">{ret.reason}</span>}
+                          </span>
+                          <span className="shrink-0 text-right font-medium text-slate-900">
+                            {formatMoney(ret.refundAmount, currency)}
+                            <span className="block text-xs font-normal text-slate-500">
+                              {ret.refundMethod === "CASH" ? t("Cash refund") : t("Credit balance reduced")}
+                            </span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
                 {transaction.notes && (
                   <div className="mt-4">
                     <p className="text-xs font-semibold tracking-wide text-slate-500 uppercase">{t("Notes")}</p>
@@ -261,7 +305,21 @@ export function TransactionDetailSheet({
 
         {transaction && (
           <DialogFooter className="print:hidden">
-            <Button variant="outline" className="w-full" onClick={() => window.print()}>
+            {canManage(user?.role) && hasReturnableItems && (
+              <Button
+                variant="outline"
+                className="w-full sm:w-auto"
+                onClick={() => setReturnDialogOpen(true)}
+              >
+                <Undo2 className="size-4" />
+                {t("Process return")}
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              className="w-full sm:w-auto"
+              onClick={() => window.print()}
+            >
               <Printer className="size-4" />
               {t("Print receipt")}
             </Button>
@@ -269,5 +327,16 @@ export function TransactionDetailSheet({
         )}
       </DialogContent>
     </Dialog>
+
+    {transaction && (
+      <ReturnDialog
+        businessId={businessId}
+        transaction={transaction}
+        open={returnDialogOpen}
+        onOpenChange={setReturnDialogOpen}
+        currency={currency}
+      />
+    )}
+    </>
   )
 }

@@ -32,6 +32,20 @@ enum MovementStatus {
 enum MovementType {
   RESTOCK
   TRANSFER
+  RETURN
+  ADJUSTMENT
+}
+
+enum RefundMethod {
+  CASH
+  CREDIT_BALANCE
+}
+
+enum AdjustmentReason {
+  DAMAGED
+  MISCOUNTED
+  THEFT
+  OTHER
 }
 
 // ─────────────────────────────────────────
@@ -60,6 +74,7 @@ model User {
   transactions    Transaction[]
   stockMovements  StockMovement[]
   creditPayments  CreditPayment[]
+  returnsProcessed Return[]
   auditLogs       AuditLog[]
 }
 
@@ -96,6 +111,7 @@ model Business {
   products      Product[]
   customers     Customer[]
   transactions  Transaction[]
+  returns       Return[]
   auditLogs     AuditLog[]
 }
 
@@ -263,6 +279,7 @@ model Transaction {
   customer      Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
   items         TransactionItem[]
   payments      CreditPayment[]
+  returns       Return[]
 }
 
 // ─────────────────────────────────────────
@@ -304,6 +321,44 @@ model TransactionItem {
 
   transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
   product     Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  returnItems ReturnItem[]
+}
+
+// ─────────────────────────────────────────
+// RETURNS (a sale reversed, in full or in part - stock goes back, the
+// customer is made whole one of two ways, see RefundMethod)
+// ─────────────────────────────────────────
+
+model Return {
+  id            String       @id @default(uuid())
+  businessId    String
+  transactionId String
+  refundMethod  RefundMethod
+  // Total value of this return, sum of its items' refundAmount.
+  refundAmount  Float
+  reason        String?
+  processedById String
+  createdAt     DateTime     @default(now())
+
+  business      Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  transaction   Transaction     @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  processedBy   User            @relation(fields: [processedById], references: [id], onDelete: Cascade)
+  items         ReturnItem[]
+  stockMovements StockMovement[]
+}
+
+model ReturnItem {
+  id                String @id @default(uuid())
+  returnId          String
+  transactionItemId String
+  quantityReturned  Float
+  // This line's share of the return's total refundAmount - proportional to
+  // the original item's subtotal/quantitySold, so a sale-time discount is
+  // inherently respected without recomputing discount logic here.
+  refundAmount      Float
+
+  return          Return          @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  transactionItem TransactionItem @relation(fields: [transactionItemId], references: [id], onDelete: Cascade)
 }
 
 // ─────────────────────────────────────────
@@ -314,8 +369,12 @@ model StockMovement {
   id              String         @id @default(uuid())
   businessId      String
   fromWarehouseId String?
+  // For ADJUSTMENT movements, this is "the warehouse being corrected", not
+  // a literal transfer destination - direction is read from
+  // previousQuantity/newQuantity instead, not from fromWarehouseId being set.
   toWarehouseId   String
   productId       String
+  // Always the positive magnitude of the change, regardless of type.
   quantity        Float
   // Display-only: the pack size actually entered (e.g. "carton" x 3), when
   // it wasn't the product's base unit. `quantity` above is always the
@@ -328,10 +387,19 @@ model StockMovement {
   notes           String?
   createdAt       DateTime       @default(now())
 
+  // Only set for ADJUSTMENT movements - the counts being reconciled and why.
+  adjustmentReason AdjustmentReason?
+  previousQuantity Float?
+  newQuantity      Float?
+
+  // Only set for RETURN movements - which Return this restock came from.
+  returnId String?
+
   movedBy       User       @relation(fields: [movedById], references: [id], onDelete: Cascade)
   fromWarehouse Warehouse? @relation("MovementFrom", fields: [fromWarehouseId], references: [id], onDelete: Cascade)
   toWarehouse   Warehouse  @relation("MovementTo", fields: [toWarehouseId], references: [id], onDelete: Cascade)
   product       Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  return        Return?    @relation(fields: [returnId], references: [id], onDelete: SetNull)
 }
 
 // ─────────────────────────────────────────

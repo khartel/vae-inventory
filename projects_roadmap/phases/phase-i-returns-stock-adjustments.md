@@ -1,6 +1,6 @@
 # Phase I — Returns & Stock Adjustments
 
-**Status: ⬜ Not started.** See `gap-analysis-2026-08.md`.
+**Status: ✅ Done (2026-08-16).** See `gap-analysis-2026-08.md` for why this was picked over Phase H, and `completed.md` for the full implementation write-up.
 
 ## Objective
 Give the business two routine physical-retail operations it can't do today: (1) formally reverse a sale when a customer returns an item (stock goes back, money is refunded/credited), and (2) reconcile the system's stock count against a physical count (a stock take / cycle count), with a proper audit trail either way.

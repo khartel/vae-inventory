@@ -95,6 +95,31 @@ const undoPaymentSchema = {
   }),
 };
 
+/**
+ * Validates POST .../transactions/:transactionId/returns - reverses some or
+ * all of a sale's items. `refundMethod` is CASH (money handed back) or
+ * CREDIT_BALANCE (reduces what's owed on an outstanding CREDIT sale) - the
+ * service enforces which is actually allowed for a given transaction, since
+ * that depends on data (paymentMethod, balanceDue) the validator can't see.
+ */
+const createReturnSchema = {
+  params: transactionIdParamSchema.params,
+  body: z.object({
+    items: z
+      .array(
+        z.object({
+          transactionItemId: z.string().uuid("Invalid transaction item id"),
+          quantityReturned: z.coerce.number().positive("Quantity must be greater than 0"),
+        })
+      )
+      .min(1, "Select at least one item to return"),
+    refundMethod: z.enum(["CASH", "CREDIT_BALANCE"], {
+      message: "Refund method must be CASH or CREDIT_BALANCE",
+    }),
+    reason: z.string().trim().optional(),
+  }),
+};
+
 module.exports = {
   businessIdParamSchema,
   transactionIdParamSchema,
@@ -102,4 +127,5 @@ module.exports = {
   listTransactionsQuerySchema,
   recordPaymentSchema,
   undoPaymentSchema,
+  createReturnSchema,
 };

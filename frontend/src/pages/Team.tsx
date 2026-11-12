@@ -99,16 +99,6 @@ export default function Team() {
     onError: (error) => toast.error(error instanceof ApiError ? error.message : t("Could not remove team member")),
   })
 
-  if (!activeBusinessId) {
-    return (
-      <EmptyState
-        icon={<Users className="size-6" />}
-        title="No business selected"
-        description="Select or create a business to manage its team."
-      />
-    )
-  }
-
   const members = teamQuery.data ?? []
   // Client-side filter over the fetched member list, matching on name,
   // username, or phone (case-insensitive).
@@ -122,6 +112,16 @@ export default function Team() {
         m.user.phone.toLowerCase().includes(q)
     )
   }, [members, search])
+
+  if (!activeBusinessId) {
+    return (
+      <EmptyState
+        icon={<Users className="size-6" />}
+        title="No business selected"
+        description="Select or create a business to manage its team."
+      />
+    )
+  }
 
   return (
     <div className="space-y-6">

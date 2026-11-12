@@ -1,6 +1,6 @@
 ﻿import { useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { ArrowLeftRight, PackagePlus, X } from "lucide-react"
+import { ArrowLeftRight, ClipboardEdit, PackagePlus, Undo2, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import * as stockService from "@/services/stock.service"
 import type { StockMovement } from "@/services/stock.service"
@@ -15,6 +15,7 @@ import { PageHeader } from "@/components/PageHeader"
 import { EmptyState } from "@/components/EmptyState"
 import { ErrorState } from "@/components/ErrorState"
 import { MoveStockDialog } from "@/components/stock/MoveStockDialog"
+import { AdjustStockDialog } from "@/components/stock/AdjustStockDialog"
 import { DownloadMenu } from "@/components/reports/DownloadMenu"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -53,21 +54,41 @@ function formatTime(date: string) {
   return new Date(date).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
 }
 
-// Small colored badge distinguishing a RESTOCK (incoming stock) from a
-// TRANSFER (moved between warehouses) movement.
+// Small colored badge distinguishing the four movement types: RESTOCK
+// (incoming stock), TRANSFER (moved between warehouses), RETURN (restocked
+// from a reversed sale), and ADJUSTMENT (a cycle-count correction).
 function MovementTypeBadge({ type }: { type: StockMovement["type"] }) {
   const { t } = useTranslation()
-  return type === "RESTOCK" ? (
-    <Badge className="gap-1 bg-success/15 text-success">
-      <PackagePlus className="size-3" />
-      {t("Restock")}
-    </Badge>
-  ) : (
-    <Badge variant="secondary" className="gap-1">
-      <ArrowLeftRight className="size-3" />
-      {t("Transfer")}
-    </Badge>
-  )
+  switch (type) {
+    case "RESTOCK":
+      return (
+        <Badge className="gap-1 bg-success/15 text-success">
+          <PackagePlus className="size-3" />
+          {t("Restock")}
+        </Badge>
+      )
+    case "RETURN":
+      return (
+        <Badge className="gap-1 bg-primary/10 text-primary">
+          <Undo2 className="size-3" />
+          {t("Return")}
+        </Badge>
+      )
+    case "ADJUSTMENT":
+      return (
+        <Badge className="gap-1 bg-destructive/10 text-destructive">
+          <ClipboardEdit className="size-3" />
+          {t("Adjustment")}
+        </Badge>
+      )
+    default:
+      return (
+        <Badge variant="secondary" className="gap-1">
+          <ArrowLeftRight className="size-3" />
+          {t("Transfer")}
+        </Badge>
+      )
+  }
 }
 
 // One row in the top-level table: all movements that happened on a given
@@ -213,7 +234,16 @@ export default function StockMovements() {
 
   return (
     <div className="space-y-6">
-      <PageHeader action={canEdit && <MoveStockDialog />} />
+      <PageHeader
+        action={
+          canEdit && (
+            <div className="flex gap-2">
+              <AdjustStockDialog />
+              <MoveStockDialog />
+            </div>
+          )
+        }
+      />
 
       <div className="flex flex-wrap items-center gap-2">
         <Input
@@ -265,6 +295,8 @@ export default function StockMovements() {
             <SelectItem value={ANY}>{t("Any type")}</SelectItem>
             <SelectItem value="RESTOCK">{t("Restock")}</SelectItem>
             <SelectItem value="TRANSFER">{t("Transfer")}</SelectItem>
+            <SelectItem value="RETURN">{t("Return")}</SelectItem>
+            <SelectItem value="ADJUSTMENT">{t("Adjustment")}</SelectItem>
           </SelectContent>
         </Select>
         {hasActiveFilters && (
@@ -349,12 +381,16 @@ export default function StockMovements() {
                     </TableCell>
                     <TableCell className="font-medium">{movement.product.name}</TableCell>
                     <TableCell className="text-muted-foreground whitespace-nowrap">
-                      {movement.fromWarehouse?.name ?? t("External")} → {movement.toWarehouse.name}
+                      {movement.type === "ADJUSTMENT"
+                        ? movement.toWarehouse.name
+                        : `${movement.fromWarehouse?.name ?? t("External")} → ${movement.toWarehouse.name}`}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
-                      {movement.unitQuantity != null && movement.unitLabel
-                        ? `${movement.unitQuantity} ${movement.unitLabel}`
-                        : `${movement.quantity} ${movement.product.unit}`}
+                      {movement.type === "ADJUSTMENT" && movement.previousQuantity != null && movement.newQuantity != null
+                        ? `${movement.previousQuantity} → ${movement.newQuantity} ${movement.product.unit}`
+                        : movement.unitQuantity != null && movement.unitLabel
+                          ? `${movement.unitQuantity} ${movement.unitLabel}`
+                          : `${movement.quantity} ${movement.product.unit}`}
                     </TableCell>
                     <TableCell className="text-muted-foreground">{movement.movedBy.fullName}</TableCell>
                   </TableRow>

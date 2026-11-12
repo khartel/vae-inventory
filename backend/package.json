@@ -49,5 +49,10 @@
     "supertest": "^7.2.2",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.2"
+  },
+  "allowScripts": {
+    "@prisma/engines@7.6.0": true,
+    "prisma@7.6.0": true,
+    "unrs-resolver@1.12.2": true
   }
 }

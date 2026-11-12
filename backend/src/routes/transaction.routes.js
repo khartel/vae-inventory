@@ -7,6 +7,7 @@ const {
   getOne,
   recordPayment,
   undoPayment,
+  createReturnController,
 } = require("../controllers/transaction.controller");
 const { authenticate } = require("../middleware/auth.middleware");
 const { authorize, belongsToBusiness } = require("../middleware/role.middleware");
@@ -17,6 +18,7 @@ const {
   listTransactionsQuerySchema,
   recordPaymentSchema,
   undoPaymentSchema,
+  createReturnSchema,
 } = require("../validators/transaction.validators");
 
 // Mounted under /api/businesses/:businessId/transactions. Every route
@@ -68,6 +70,15 @@ router.delete(
   authorize("SUPERADMIN", "ADMIN"),
   validate(undoPaymentSchema),
   undoPayment
+);
+
+// Processing a return is a correction, not a routine operation - same roles
+// as undoing a payment/receiving stock/moving stock.
+router.post(
+  "/:transactionId/returns",
+  authorize("SUPERADMIN", "ADMIN"),
+  validate(createReturnSchema),
+  createReturnController
 );
 
 module.exports = router;

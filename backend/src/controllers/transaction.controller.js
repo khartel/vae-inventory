@@ -5,6 +5,7 @@ const {
   getTransactionSummary,
   recordCreditPayment,
   undoCreditPayment,
+  createReturn,
 } = require("../services/transaction.service");
 const { sendSuccess } = require("../utils/response.utils");
 const asyncHandler = require("../utils/asyncHandler");
@@ -135,4 +136,26 @@ const undoPayment = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { create, getAll, getSummary, getOne, recordPayment, undoPayment };
+/**
+ * POST /api/businesses/:businessId/transactions/:transactionId/returns
+ * Reverses some or all of a sale's items — restocks the returned quantity
+ * and either records a cash refund or reduces the outstanding credit balance.
+ */
+const createReturnController = asyncHandler(async (req, res) => {
+  const { items, refundMethod, reason } = req.body;
+
+  const transaction = await createReturn(req.params.transactionId, req.params.businessId, {
+    items,
+    refundMethod,
+    reason,
+    processedById: req.user.id,
+  });
+
+  return sendSuccess(res, {
+    message: "Return recorded",
+    data: transaction,
+    statusCode: 201,
+  });
+});
+
+module.exports = { create, getAll, getSummary, getOne, recordPayment, undoPayment, createReturnController };

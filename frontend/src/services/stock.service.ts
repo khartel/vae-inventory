@@ -5,13 +5,24 @@ import { apiClient, apiRequest } from "@/lib/api-client"
 
 // RESTOCK = new stock brought into a warehouse (no source warehouse).
 // TRANSFER = stock moved from one of the business's warehouses to another.
-export type MovementType = "RESTOCK" | "TRANSFER"
+// RETURN = stock restocked from a reversed sale (see transaction.service.ts's
+// ReturnRecord) - shaped like a RESTOCK (no source warehouse).
+// ADJUSTMENT = a cycle-count correction to a warehouse's system count -
+// `toWarehouse` here means "the warehouse being corrected", not a literal
+// transfer destination; see previousQuantity/newQuantity for direction.
+export type MovementType = "RESTOCK" | "TRANSFER" | "RETURN" | "ADJUSTMENT"
 
-// A single inventory movement record. `fromWarehouse` is null for RESTOCK
-// movements since stock isn't coming from another warehouse in the system.
-// `unitLabel`/`unitQuantity` are display-only: set when the movement was
-// entered in a pack size other than the product's base unit (e.g. "3
-// cartons") - `quantity` is always the base-unit amount actually applied.
+// Only set on ADJUSTMENT movements - the reason a physical count didn't
+// match the system count.
+export type AdjustmentReason = "DAMAGED" | "MISCOUNTED" | "THEFT" | "OTHER"
+
+// A single inventory movement record. `fromWarehouse` is null for RESTOCK/
+// RETURN/ADJUSTMENT movements since stock isn't coming from another
+// warehouse in the system. `unitLabel`/`unitQuantity` are display-only: set
+// when the movement was entered in a pack size other than the product's
+// base unit (e.g. "3 cartons") - `quantity` is always the base-unit amount
+// actually applied (and, for ADJUSTMENT, always the positive magnitude of
+// the change - see previousQuantity/newQuantity for direction).
 export interface StockMovement {
   id: string
   quantity: number
@@ -25,6 +36,10 @@ export interface StockMovement {
   toWarehouse: { id: string; name: string }
   product: { id: string; name: string; unit: string }
   movedBy: { id: string; fullName: string; username: string }
+  // Only set on ADJUSTMENT movements.
+  adjustmentReason: AdjustmentReason | null
+  previousQuantity: number | null
+  newQuantity: number | null
 }
 
 // Payload for transferring a quantity of one product between two warehouses.
@@ -64,6 +79,16 @@ export interface StockMovementFilters {
   type?: MovementType
 }
 
+// Payload for reconciling a warehouse's system count for one product to a
+// physical (shelf) count.
+export interface AdjustStockInput {
+  warehouseId: string
+  productId: string
+  actualQuantity: number
+  reason: AdjustmentReason
+  notes?: string
+}
+
 /** Lists stock movements (restocks + transfers) for a business, optionally filtered. */
 export const getStockMovements = (businessId: string, filters?: StockMovementFilters) =>
   apiRequest<StockMovement[]>(
@@ -77,3 +102,7 @@ export const moveStock = (businessId: string, input: MoveStockInput) =>
 /** Receives (restocks) a batch of products into a single warehouse. */
 export const receiveStock = (businessId: string, input: ReceiveStockInput) =>
   apiRequest<StockMovement[]>(apiClient.post(`/businesses/${businessId}/stock/receive`, input))
+
+/** Reconciles a warehouse's system count for one product to a physical count. */
+export const adjustStock = (businessId: string, input: AdjustStockInput) =>
+  apiRequest<StockMovement>(apiClient.post(`/businesses/${businessId}/stock/adjust`, input))

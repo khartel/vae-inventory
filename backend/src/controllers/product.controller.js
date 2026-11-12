@@ -10,6 +10,7 @@ const {
   getAllStock,
   moveStock,
   getStockMovements,
+  adjustStock,
 } = require("../services/product.service");
 const { sendSuccess } = require("../utils/response.utils");
 const asyncHandler = require("../utils/asyncHandler");
@@ -210,6 +211,31 @@ const getMovements = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * POST /api/businesses/:businessId/stock/adjust
+ * Reconcile a warehouse's system count for one product to a physical count.
+ */
+const adjustStockController = asyncHandler(async (req, res) => {
+  const { warehouseId, productId, actualQuantity, reason, notes } = req.body;
+  const { businessId } = req.params;
+
+  const movement = await adjustStock({
+    businessId,
+    warehouseId,
+    productId,
+    actualQuantity,
+    reason,
+    notes,
+    adjustedById: req.user.id,
+  });
+
+  return sendSuccess(res, {
+    message: "Stock adjusted successfully",
+    data: movement,
+    statusCode: 201,
+  });
+});
+
 module.exports = {
   create,
   getAll,
@@ -222,4 +248,5 @@ module.exports = {
   getStock,
   moveStockBetweenWarehouses,
   getMovements,
+  adjustStockController,
 };

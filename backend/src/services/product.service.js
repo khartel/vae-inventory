@@ -784,8 +784,118 @@ const moveStock = async ({
 };
 
 /**
- * Get stock movement history for a business (both RESTOCK and TRANSFER
- * entries), with optional filters for date range, source/destination
+ * Reconcile a warehouse's system-recorded count for one product to a
+ * physical (shelf) count, with a required reason — a stock take / cycle
+ * count correction, distinct from a RESTOCK (nothing was actually
+ * delivered) or a TRANSFER (nothing moved to another warehouse). Sets
+ * `WarehouseStock.quantity` directly to `actualQuantity` (a reconciliation
+ * to an absolute count, unlike receiveStock/moveStock's increments), and
+ * records a single ADJUSTMENT StockMovement carrying both the previous and
+ * new counts so the direction and size of the correction stay unambiguous
+ * without needing a signed quantity. Also writes an AuditLog entry — an
+ * adjustment is a correction, not routine restock/transfer activity, so it
+ * gets the same audit treatment as undoing a credit payment.
+ *
+ * @param {object} params
+ * @param {string} params.businessId
+ * @param {string} params.warehouseId - Must belong to businessId.
+ * @param {string} params.productId - Must belong to businessId; not
+ *   filtered on deletedAt, since a since-discontinued product might still
+ *   physically be on a shelf awaiting cleanup.
+ * @param {number} params.actualQuantity - The physically counted quantity;
+ *   must differ from the current system count (no-op adjustments are rejected).
+ * @param {"DAMAGED"|"MISCOUNTED"|"THEFT"|"OTHER"} params.reason
+ * @param {string} [params.notes]
+ * @param {string} params.adjustedById - User who performed the count.
+ * @returns {Promise<object>} The created ADJUSTMENT StockMovement record.
+ * @throws {AppError} 404 if the warehouse or product isn't found in this
+ *   business; error if actualQuantity matches the current count exactly.
+ */
+const adjustStock = async ({ businessId, warehouseId, productId, actualQuantity, reason, notes, adjustedById }) => {
+  const warehouse = await prisma.warehouse.findFirst({
+    where: { id: warehouseId, businessId, deletedAt: null },
+  });
+  if (!warehouse) {
+    throw new AppError("Warehouse not found", 404);
+  }
+
+  const product = await prisma.product.findFirst({
+    where: { id: productId, businessId },
+  });
+  if (!product) {
+    throw new AppError("Product not found", 404);
+  }
+
+  const existingStock = await prisma.warehouseStock.findUnique({
+    where: { warehouseId_productId: { warehouseId, productId } },
+  });
+  const previousQuantity = existingStock?.quantity ?? 0;
+
+  if (actualQuantity === previousQuantity) {
+    throw new AppError("Actual count already matches the system count — nothing to adjust");
+  }
+
+  const actor = await prisma.user.findUnique({ where: { id: adjustedById } });
+
+  const movement = await prisma.$transaction(async (tx) => {
+    if (existingStock) {
+      await tx.warehouseStock.update({
+        where: { warehouseId_productId: { warehouseId, productId } },
+        data: { quantity: actualQuantity },
+      });
+    } else {
+      await tx.warehouseStock.create({
+        data: { warehouseId, productId, quantity: actualQuantity },
+      });
+    }
+
+    const created = await tx.stockMovement.create({
+      data: {
+        businessId,
+        fromWarehouseId: null,
+        toWarehouseId: warehouseId,
+        productId,
+        quantity: Math.abs(actualQuantity - previousQuantity),
+        previousQuantity,
+        newQuantity: actualQuantity,
+        adjustmentReason: reason,
+        type: "ADJUSTMENT",
+        status: "COMPLETED",
+        movedById: adjustedById,
+        notes,
+      },
+      include: {
+        toWarehouse: { select: { id: true, name: true } },
+        product: { select: { id: true, name: true, unit: true } },
+        movedBy: { select: { id: true, fullName: true, username: true } },
+      },
+    });
+
+    await recordAudit(tx, {
+      businessId,
+      actorId: adjustedById,
+      actorName: actor?.fullName ?? null,
+      action: "stock.adjusted",
+      entityType: "StockMovement",
+      entityId: created.id,
+      metadata: {
+        productName: product.name,
+        warehouseName: warehouse.name,
+        previousQuantity,
+        newQuantity: actualQuantity,
+        reason,
+      },
+    });
+
+    return created;
+  });
+
+  return movement;
+};
+
+/**
+ * Get stock movement history for a business (RESTOCK, TRANSFER, RETURN, and
+ * ADJUSTMENT entries), with optional filters for date range, source/destination
  * warehouse, product, and movement type — powers the stock-movements
  * report/audit trail screen.
  *
@@ -841,4 +951,5 @@ module.exports = {
   getAllStock,
   moveStock,
   getStockMovements,
+  adjustStock,
 };

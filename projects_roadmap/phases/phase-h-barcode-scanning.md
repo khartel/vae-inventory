@@ -1,6 +1,6 @@
 # Phase H — Barcode Scanning
 
-**Status: ⬜ Not started.** See `gap-analysis-2026-08.md`.
+**Status: ⬜ Not started, deliberately deferred (2026-08-16).** Victor chose Phase I (returns & stock adjustments) first instead — not every business has a barcode scanner, and Phase I had no dependencies and addressed a bigger day-to-day trust gap. Revisit once Phase I/J/K progress or a real usability complaint makes this the priority. See `gap-analysis-2026-08.md`.
 
 ## Objective
 Let a cashier scan a product's barcode (via phone/tablet camera, no extra hardware) at the register and during restocking, instead of typing a search term every time.

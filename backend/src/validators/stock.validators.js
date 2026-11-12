@@ -30,7 +30,7 @@ const movementsQuerySchema = {
     fromWarehouseId: z.string().uuid("Invalid source warehouse id").optional(),
     toWarehouseId: z.string().uuid("Invalid destination warehouse id").optional(),
     productId: z.string().uuid("Invalid product id").optional(),
-    type: z.enum(["RESTOCK", "TRANSFER"]).optional(),
+    type: z.enum(["RESTOCK", "TRANSFER", "RETURN", "ADJUSTMENT"]).optional(),
   }),
 };
 
@@ -57,4 +57,27 @@ const receiveStockSchema = {
   }),
 };
 
-module.exports = { businessIdParamSchema, moveStockSchema, receiveStockSchema, movementsQuerySchema };
+/**
+ * Validates POST .../stock/adjust - reconciles a warehouse's system count
+ * for one product to a physical count, with a required reason.
+ */
+const adjustStockSchema = {
+  params: businessIdParamSchema.params,
+  body: z.object({
+    warehouseId: z.string().uuid("Invalid warehouse id"),
+    productId: z.string().uuid("Invalid product id"),
+    actualQuantity: z.coerce.number().nonnegative("Actual quantity can't be negative"),
+    reason: z.enum(["DAMAGED", "MISCOUNTED", "THEFT", "OTHER"], {
+      message: "Reason must be DAMAGED, MISCOUNTED, THEFT, or OTHER",
+    }),
+    notes: z.string().trim().optional(),
+  }),
+};
+
+module.exports = {
+  businessIdParamSchema,
+  moveStockSchema,
+  receiveStockSchema,
+  movementsQuerySchema,
+  adjustStockSchema,
+};

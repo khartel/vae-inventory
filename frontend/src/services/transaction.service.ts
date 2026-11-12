@@ -30,6 +30,31 @@ export interface CreditPayment {
   recordedBy: { id: string; fullName: string; username: string }
 }
 
+// CASH covers both cash and transfer refunds handed back to the customer.
+// CREDIT_BALANCE reduces what's still owed on an outstanding CREDIT sale
+// instead (only ever offered when there's a positive balance left to reduce).
+export type RefundMethod = "CASH" | "CREDIT_BALANCE"
+
+// One line within a Return: how much of a given TransactionItem came back.
+export interface ReturnItem {
+  id: string
+  transactionItemId: string
+  quantityReturned: number
+  refundAmount: number
+}
+
+// A return recorded against a transaction — some or all of its items
+// reversed, stock restocked, and the customer made whole one of two ways.
+export interface ReturnRecord {
+  id: string
+  refundMethod: RefundMethod
+  refundAmount: number
+  reason: string | null
+  createdAt: string
+  processedBy: { id: string; fullName: string; username: string }
+  items: ReturnItem[]
+}
+
 // A completed sale. `amountPaid`/`balanceDue` track partial payments for
 // CREDIT sales (both equal `totalAmount`/0 for CASH/TRANSFER); `paidAt` is
 // set once `balanceDue` reaches zero. `amountTendered`/`changeGiven` are
@@ -48,6 +73,7 @@ export interface Transaction {
   createdAt: string
   items: TransactionItem[]
   payments: CreditPayment[]
+  returns: ReturnRecord[]
   amountPaid: number
   balanceDue: number
   amountTendered: number | null
@@ -75,6 +101,13 @@ export interface CreateTransactionInput {
     unitLabel?: string
     unitQuantity?: number
   }>
+}
+
+// Payload for reversing some or all of a sale's items (see ReturnRecord).
+export interface CreateReturnInput {
+  items: Array<{ transactionItemId: string; quantityReturned: number }>
+  refundMethod: RefundMethod
+  reason?: string
 }
 
 // Optional filters/pagination for listing transaction history.
@@ -118,4 +151,10 @@ export const recordPayment = (businessId: string, transactionId: string, amount:
 export const undoPayment = (businessId: string, transactionId: string, paymentId: string) =>
   apiRequest<Transaction>(
     apiClient.delete(`/businesses/${businessId}/transactions/${transactionId}/payments/${paymentId}`)
+  )
+
+/** Reverses some or all of a sale's items — restocks quantity and records how the customer was made whole. */
+export const createReturn = (businessId: string, transactionId: string, input: CreateReturnInput) =>
+  apiRequest<Transaction>(
+    apiClient.post(`/businesses/${businessId}/transactions/${transactionId}/returns`, input)
   )

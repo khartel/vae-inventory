@@ -67,16 +67,6 @@ export default function Products() {
       toast.error(error instanceof ApiError ? error.message : t("Could not delete product")),
   })
 
-  if (!activeBusinessId) {
-    return (
-      <EmptyState
-        icon={<Package className="size-6" />}
-        title="No business selected"
-        description="Select or create a business to manage products."
-      />
-    )
-  }
-
   const products = productsQuery.data ?? []
   // Client-side filter over the fetched product list, matching on name or
   // short code (case-insensitive).
@@ -87,6 +77,16 @@ export default function Products() {
       (p) => p.name.toLowerCase().includes(q) || p.shortCode?.toLowerCase().includes(q)
     )
   }, [products, search])
+
+  if (!activeBusinessId) {
+    return (
+      <EmptyState
+        icon={<Package className="size-6" />}
+        title="No business selected"
+        description="Select or create a business to manage products."
+      />
+    )
+  }
 
   return (
     <div className="space-y-6">

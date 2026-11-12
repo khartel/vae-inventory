@@ -126,3 +126,15 @@ Chronological. Each entry: context → decision → consequences. Treat these as
 **Context**: Repo was still named `Business_WebApp` (a placeholder name); Victor wanted the live demo URL to read `vae-inventory.vercel.app`.
 **Decision**: Renamed the GitHub repo `khartel/Business_WebApp` → `khartel/vae-inventory` (GitHub's automatic redirect keeps old links working); local `origin` remote updated to match; Vercel project named `vae-inventory` to match on import.
 **Consequences**: Any documentation or tooling referencing the old repo name/URL should be treated as stale if found — this migration (`projects_roadmap/`, `README.md`) is itself part of cleaning that up.
+
+## ADR-22: Phase H deferred, Phase I built first (2026-08-16)
+
+**Context**: `todo.md`'s recommended order from the 2026-08-07 gap analysis had Phase H (barcode scanning) directly after Phase G. Victor asked to skip it — "not every business has one" — and pick a higher-priority phase instead.
+**Decision**: Built Phase I (returns & stock adjustments) instead: no dependencies (unlike Phase J, which needs Phase G's cost data and is a much bigger, procurement-shaped feature with more scope-creep risk), and it addresses something every physical retail shop hits constantly rather than a hardware-dependent usability nicety. Phase H stays in the backlog, not cancelled — see `phases/phase-h-barcode-scanning.md`.
+**Consequences**: The G→H→I→J→K order in `todo.md`/`gap-analysis-2026-08.md` is a *recommendation*, not a commitment — a future session shouldn't treat skipping a phase as needing to be "caught up on" before moving to the next one. Re-evaluate Phase H whenever a real usability complaint about register speed comes up, or once J/K make it more clearly next.
+
+## ADR-23: Returns don't net into Reports revenue/profit yet (2026-08-16)
+
+**Context**: Phase I's own phase doc flagged this as worth confirming with Victor before building: should a return reduce the revenue/profit figures already shown in Daily/Weekly/Monthly/Employee/Product reports for the period the original sale fell in?
+**Decision**: Asked directly via `AskUserQuestion`. Victor chose to keep reports showing gross sales unchanged for now — a return restocks inventory and settles the money owed on that specific sale (visible on the receipt and in Stock Movements), but report totals aren't touched in this pass.
+**Consequences**: `report.service.js` and all five report tab components are unmodified by Phase I — verified live that a period's reported revenue is identical before and after processing returns within it. Netting returns into report figures is explicitly a future, separate pass (would touch `computeCostProfit` and the same five report files Phase G already fanned out across) — don't assume it's already handled if asked to build on top of report numbers later.

@@ -25,16 +25,31 @@ const TRANSACTION_INCLUDE = {
     },
     orderBy: { createdAt: "asc" },
   },
+  returns: {
+    include: {
+      items: true,
+      processedBy: { select: { id: true, fullName: true, username: true } },
+    },
+    orderBy: { createdAt: "asc" },
+  },
 };
 
 /**
  * Attach computed amountPaid/balanceDue (only meaningful for CREDIT sales,
- * but harmless — 0 paid / balanceDue === totalAmount — for others).
+ * but harmless — 0 paid / balanceDue === totalAmount — for others). A
+ * CREDIT_BALANCE return isn't a payment (it's not in `payments`, on
+ * purpose — see createReturn's doc comment), so it's subtracted separately
+ * here rather than folded into amountPaid, keeping "what was actually paid"
+ * and "what was refunded off the balance" distinguishable to callers.
  */
 const withCreditStats = (transaction) => {
   const amountPaid =
     Math.round(transaction.payments.reduce((sum, p) => sum + p.amount, 0) * 100) / 100;
-  const balanceDue = Math.round((transaction.totalAmount - amountPaid) * 100) / 100;
+  const creditReductionFromReturns = (transaction.returns ?? [])
+    .filter((r) => r.refundMethod === "CREDIT_BALANCE")
+    .reduce((sum, r) => sum + r.refundAmount, 0);
+  const balanceDue =
+    Math.round((transaction.totalAmount - amountPaid - creditReductionFromReturns) * 100) / 100;
 
   return { ...transaction, amountPaid, balanceDue };
 };
@@ -520,6 +535,200 @@ const undoCreditPayment = async (transactionId, paymentId, businessId, actorId) 
 };
 
 /**
+ * Reverse some or all of a sale's items — restocks the returned quantity to
+ * the warehouse it was originally sold from, and makes the customer whole
+ * one of two ways:
+ * - CASH: money (or a transfer) handed back — no further bookkeeping needed.
+ * - CREDIT_BALANCE: reduces what's still owed on an outstanding CREDIT sale.
+ *   Deliberately *not* recorded as a CreditPayment (that table is reserved
+ *   for money the customer actually paid in) — instead `withCreditStats`
+ *   subtracts CREDIT_BALANCE returns from balanceDue directly, so this can
+ *   never be mistaken for a real payment in the "Payments recorded" history.
+ *   Only allowed while the sale still has a positive balance; if the return
+ *   is worth more than what's left owed, this is rejected outright rather
+ *   than silently splitting it across a partial balance-reduction plus a
+ *   partial cash refund — the operator should record a cash refund instead.
+ *
+ * A product can be returned across more than one visit (e.g. 2 of 5 today,
+ * 2 more next week) — each item's returnable quantity is capped at
+ * `quantitySold` minus whatever's already been returned against it,
+ * computed fresh from existing ReturnItem rows rather than a stored running
+ * total, so it can never drift out of sync with the return history itself.
+ *
+ * @param {string} transactionId
+ * @param {string} businessId - Scopes the lookup to this business.
+ * @param {object} params
+ * @param {Array<{transactionItemId: string, quantityReturned: number}>} params.items
+ * @param {"CASH"|"CREDIT_BALANCE"} params.refundMethod
+ * @param {string} [params.reason]
+ * @param {string} params.processedById
+ * @returns {Promise<object>} The updated transaction with refreshed credit stats.
+ * @throws {AppError} 404 if the transaction or a referenced item isn't
+ *   found; error if a quantity exceeds what's returnable, or the refund
+ *   method isn't valid for this transaction's current state.
+ */
+const createReturn = async (transactionId, businessId, { items, refundMethod, reason, processedById }) => {
+  const transaction = await prisma.transaction.findFirst({
+    where: { id: transactionId, businessId },
+    include: {
+      items: true,
+      payments: true,
+      returns: { include: { items: true } },
+    },
+  });
+
+  if (!transaction) {
+    throw new AppError("Transaction not found", 404);
+  }
+
+  const returnItems = items.map(({ transactionItemId, quantityReturned }) => {
+    const transactionItem = transaction.items.find((i) => i.id === transactionItemId);
+    if (!transactionItem) {
+      throw new AppError(`Item ${transactionItemId} does not belong to this sale`, 404);
+    }
+
+    const alreadyReturned = transaction.returns
+      .flatMap((r) => r.items)
+      .filter((ri) => ri.transactionItemId === transactionItemId)
+      .reduce((sum, ri) => sum + ri.quantityReturned, 0);
+
+    const returnable = transactionItem.quantitySold - alreadyReturned;
+    if (quantityReturned > returnable + 0.0001) {
+      throw new AppError(
+        `Can't return ${quantityReturned} of this item — only ${returnable} left to return`
+      );
+    }
+
+    // Proportional to the item's actual subtotal (not a re-derived catalog
+    // price), so a sale-time discount is inherently respected.
+    const refundAmount =
+      Math.round((quantityReturned * (transactionItem.subtotal / transactionItem.quantitySold)) * 100) / 100;
+
+    return { transactionItem, quantityReturned, refundAmount };
+  });
+
+  const totalRefundAmount = Math.round(returnItems.reduce((sum, ri) => sum + ri.refundAmount, 0) * 100) / 100;
+
+  if (refundMethod === "CREDIT_BALANCE") {
+    if (transaction.paymentMethod !== "CREDIT") {
+      throw new AppError("Only credit sales can have their balance reduced by a return");
+    }
+    const { balanceDue } = withCreditStats(transaction);
+    if (balanceDue <= 0) {
+      throw new AppError("This sale is already fully paid — record a cash refund instead");
+    }
+    if (totalRefundAmount > balanceDue + 0.01) {
+      throw new AppError(
+        `This return (${totalRefundAmount}) is worth more than the outstanding balance (${balanceDue}) — record a cash refund instead`
+      );
+    }
+  }
+
+  const actor = await prisma.user.findUnique({ where: { id: processedById } });
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const createdReturn = await tx.return.create({
+      data: {
+        businessId,
+        transactionId,
+        refundMethod,
+        refundAmount: totalRefundAmount,
+        reason,
+        processedById,
+        items: {
+          create: returnItems.map((ri) => ({
+            transactionItemId: ri.transactionItem.id,
+            quantityReturned: ri.quantityReturned,
+            refundAmount: ri.refundAmount,
+          })),
+        },
+      },
+    });
+
+    // Restock each returned line back into the sale's original warehouse -
+    // not gated on the product's deletedAt, since a since-discontinued
+    // product must still be returnable.
+    for (const ri of returnItems) {
+      const existingStock = await tx.warehouseStock.findUnique({
+        where: {
+          warehouseId_productId: {
+            warehouseId: transaction.warehouseId,
+            productId: ri.transactionItem.productId,
+          },
+        },
+      });
+
+      if (existingStock) {
+        await tx.warehouseStock.update({
+          where: {
+            warehouseId_productId: {
+              warehouseId: transaction.warehouseId,
+              productId: ri.transactionItem.productId,
+            },
+          },
+          data: { quantity: { increment: ri.quantityReturned } },
+        });
+      } else {
+        await tx.warehouseStock.create({
+          data: {
+            warehouseId: transaction.warehouseId,
+            productId: ri.transactionItem.productId,
+            quantity: ri.quantityReturned,
+          },
+        });
+      }
+
+      await tx.stockMovement.create({
+        data: {
+          businessId,
+          fromWarehouseId: null,
+          toWarehouseId: transaction.warehouseId,
+          productId: ri.transactionItem.productId,
+          quantity: ri.quantityReturned,
+          type: "RETURN",
+          status: "COMPLETED",
+          movedById: processedById,
+          notes: reason,
+          returnId: createdReturn.id,
+        },
+      });
+    }
+
+    // A CREDIT_BALANCE return that brings the balance to ~0 settles the
+    // sale, same threshold/reasoning as recordCreditPayment.
+    const isNowSettled =
+      refundMethod === "CREDIT_BALANCE" &&
+      !transaction.paidAt &&
+      withCreditStats(transaction).balanceDue - totalRefundAmount <= 0.01;
+
+    const result = await tx.transaction.update({
+      where: { id: transactionId },
+      data: isNowSettled ? { paidAt: new Date() } : {},
+      include: TRANSACTION_INCLUDE,
+    });
+
+    await recordAudit(tx, {
+      businessId,
+      actorId: processedById,
+      actorName: actor?.fullName ?? null,
+      action: "transaction.returned",
+      entityType: "Return",
+      entityId: createdReturn.id,
+      metadata: {
+        transactionId,
+        refundAmount: totalRefundAmount,
+        refundMethod,
+        itemCount: returnItems.length,
+      },
+    });
+
+    return result;
+  });
+
+  return withCreditStats(updated);
+};
+
+/**
  * Build the dashboard summary: today's transactions in full (with a
  * cash/transfer split and per-employee/per-product breakdowns computed in
  * memory), plus lightweight aggregate totals (via Prisma `aggregate`, not
@@ -678,4 +887,5 @@ module.exports = {
   getTransactionSummary,
   recordCreditPayment,
   undoCreditPayment,
+  createReturn,
 };
