@@ -15,6 +15,9 @@ import SelectBusiness from "@/pages/SelectBusiness"
 // bloating the initial bundle (see the "chunks larger than 500kB" build
 // warning this was added to address). Auth/landing pages above stay
 // eagerly-loaded since they're on the critical path for every session.
+const Purchases = lazy(() => import("@/pages/Purchases"))
+const Suppliers = lazy(() => import("@/pages/Suppliers"))
+const Sales = lazy(() => import("@/pages/Sales"))
 const Pos = lazy(() => import("@/pages/Pos"))
 const Customers = lazy(() => import("@/pages/Customers"))
 const Dashboard = lazy(() => import("@/pages/Dashboard"))
@@ -92,6 +95,9 @@ function App() {
 
           <Route element={<AppLayout />}>
             <Route path="/pos" element={<Pos />} />
+            <Route path="/sales" element={<Sales />} />
+            <Route path="/purchases" element={<Purchases />} />
+            <Route path="/suppliers" element={<Suppliers />} />
             <Route path="/customers" element={<Customers />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/products" element={<Products />} />

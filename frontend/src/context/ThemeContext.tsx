@@ -26,13 +26,13 @@ function getSystemTheme(): "light" | "dark" {
 
 /**
  * Provides theme state to the app. On mount, restores the saved preference
- * (defaulting to "system"), and whenever the preference is "system", keeps
+ * (defaulting to "light"), and whenever the preference is "system", keeps
  * `resolvedTheme` and the `<html>` class in sync with live OS theme changes
  * via a `matchMedia` change listener.
  */
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(
-    () => (localStorage.getItem(STORAGE_KEY) as Theme | null) ?? "system"
+    () => (localStorage.getItem(STORAGE_KEY) as Theme | null) ?? "light"
   )
   const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() =>
     theme === "system" ? getSystemTheme() : theme

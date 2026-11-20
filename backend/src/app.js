@@ -35,9 +35,16 @@ const stockRoutes = require("./routes/stock.routes");
 const transactionRoutes = require("./routes/transaction.routes");
 const reportRoutes = require("./routes/report.routes");
 const auditLogRoutes = require("./routes/audit-log.routes");
+const purchaseRoutes = require("./routes/purchase.routes");
 const platformRoutes = require("./routes/superadmin.routes");
 
 const app = express();
+
+// Trust the first reverse-proxy hop (Render / Vercel rewrite proxy) so
+// req.ip reflects the real client IP for rate limiting instead of collapsing
+// all users behind one proxy IP or tripping express-rate-limit v8's
+// X-Forwarded-For check.
+app.set("trust proxy", 1);
 
 // ─────────────────────────────────────────
 // REQUEST LOGGER
@@ -126,6 +133,7 @@ app.use("/api/businesses/:businessId/stock", stockRoutes);
 app.use("/api/businesses/:businessId/transactions", transactionRoutes);
 app.use("/api/businesses/:businessId/reports", reportRoutes);
 app.use("/api/businesses/:businessId/audit-log", auditLogRoutes);
+app.use("/api/businesses/:businessId/purchasing", purchaseRoutes);
 app.use("/api/platform", platformRoutes);
 
 // ─────────────────────────────────────────

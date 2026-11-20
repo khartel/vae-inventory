@@ -12,6 +12,9 @@ import {
   Boxes,
   Building2,
   Settings,
+  ShoppingCart,
+  Truck,
+  Receipt,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/context/AuthContext"
@@ -31,9 +34,12 @@ interface NavItem {
 // sheet and for looking up the current page's label).
 export const NAV_ITEMS: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/products", label: "Inventory", icon: Package },
+  { to: "/purchases", label: "Purchases", icon: ShoppingCart, roles: ["SUPERADMIN", "ADMIN"] },
+  { to: "/sales", label: "Sales", icon: Receipt },
   { to: "/pos", label: "Register", icon: Store },
+  { to: "/suppliers", label: "Suppliers", icon: Truck, roles: ["SUPERADMIN", "ADMIN"] },
   { to: "/customers", label: "Customers", icon: Contact },
-  { to: "/products", label: "Products", icon: Package },
   { to: "/warehouses", label: "Warehouses", icon: Warehouse },
   { to: "/stock", label: "Stock Movements", icon: ArrowLeftRight },
   { to: "/team", label: "Team", icon: Users },
@@ -46,7 +52,7 @@ export const NAV_ITEMS: NavItem[] = [
 export function SidebarBrand() {
   return (
     <Link to="/" className="flex h-16 items-center gap-2 px-6 transition-opacity hover:opacity-80">
-      <div className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground shadow-[0_0_16px_var(--glow-primary)]">
+      <div className="workspace-brand-mark flex size-8 items-center justify-center rounded-lg">
         <Boxes className="size-5" />
       </div>
       <span className="font-heading text-lg font-semibold text-white">VAE Inventory</span>
@@ -61,15 +67,17 @@ export function SidebarBrand() {
  * it since there's nothing to close.
  */
 export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
-  const { user } = useAuth()
+  const { user, activeBusinessId } = useAuth()
   const { t } = useTranslation()
   // Role-based filtering: an item is shown if it has no `roles` restriction,
   // or if the current user's role is in that restriction list (e.g. the
   // "Businesses" and "Settings" links are SUPERADMIN-only).
-  const items = NAV_ITEMS.filter((item) => !item.roles || (user && item.roles.includes(user.role)))
+  const businessRole = user?.businesses.find(b => b.id === activeBusinessId)?.roleInBusiness ?? user?.role
+  const items = NAV_ITEMS.filter((item) => !item.roles || (businessRole && item.roles.includes(businessRole)))
 
   return (
-    <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+    <nav className="workspace-nav flex-1 space-y-1 overflow-y-auto px-3 py-4">
+      <p className="workspace-nav-caption">{t("WORKSPACE")}</p>
       {items.map((item) => (
         <NavLink
           key={item.to}
@@ -79,7 +87,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
             cn(
               "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar",
               isActive
-                ? "bg-gradient-to-r from-sidebar-primary to-emerald-400 text-sidebar-primary-foreground shadow-[0_0_20px_var(--glow-primary)]"
+                ? "text-white"
                 : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
             )
           }
@@ -99,10 +107,10 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
  */
 export function Sidebar() {
   return (
-    <aside className="hidden h-svh w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar/85 text-sidebar-foreground backdrop-blur-2xl lg:flex">
+    <aside className="workspace-sidebar hidden h-svh w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar/85 text-sidebar-foreground backdrop-blur-2xl lg:flex">
       <SidebarBrand />
       <SidebarNav />
-      <div className="border-t border-sidebar-border p-4 text-xs text-sidebar-foreground/40">
+      <div className="workspace-sidebar-footer">
         VAE Inventory &copy; {new Date().getFullYear()}
       </div>
     </aside>

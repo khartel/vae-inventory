@@ -43,6 +43,7 @@ export function LoginShell({ title, description, children, showRegistration = fa
 
       <main className="login-content">
         <section className="login-story" aria-labelledby="login-hero-title">
+          <div className="login-warehouse-image" aria-hidden="true" />
           <p className="login-eyebrow">{t("Your business. In control.")}</p>
           <h1 id="login-hero-title">{t("Run your inventory")}<br /><span>{t("with clarity.")}</span></h1>
           <p className="login-intro">{t("Manage your stock, sales, and everyday business operations in one connected workspace.")}</p>

@@ -69,7 +69,7 @@ export function Topbar() {
   }
 
   return (
-    <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-border bg-card/60 px-4 backdrop-blur-xl sm:px-6">
+    <header className="workspace-topbar flex h-16 shrink-0 items-center justify-between gap-4 border-b border-border bg-card/60 px-4 backdrop-blur-xl sm:px-6">
       <div className="flex min-w-0 items-center gap-2">
         <Sheet open={navOpen} onOpenChange={setNavOpen}>
           <Button
@@ -84,7 +84,7 @@ export function Topbar() {
           <SheetContent
             side="left"
             showCloseButton={false}
-            className="flex w-64 flex-col gap-0 border-r border-sidebar-border bg-sidebar p-0 text-sidebar-foreground"
+            className="workspace-sidebar flex w-64 flex-col gap-0 border-r border-sidebar-border bg-sidebar p-0 text-sidebar-foreground"
           >
             <SheetTitle className="sr-only">{t("Navigation")}</SheetTitle>
             <SidebarBrand />
@@ -118,7 +118,7 @@ export function Topbar() {
               </Avatar>
               <div className="hidden text-left sm:block">
                 <p className="text-sm font-medium leading-none">{user.fullName}</p>
-                <p className="text-xs text-muted-foreground">{user.role}</p>
+                <p className="text-xs text-muted-foreground">{activeBusiness?.roleInBusiness ?? user.role}</p>
               </div>
               <ChevronDown className="hidden size-4 text-muted-foreground sm:block" />
             </button>

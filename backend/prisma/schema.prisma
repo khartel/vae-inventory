@@ -113,6 +113,8 @@ model Business {
   transactions  Transaction[]
   returns       Return[]
   auditLogs     AuditLog[]
+  suppliers     Supplier[]
+  purchaseOrders PurchaseOrder[]
 }
 
 // ─────────────────────────────────────────
@@ -154,6 +156,7 @@ model Warehouse {
   transactions  Transaction[]
   movementsFrom StockMovement[] @relation("MovementFrom")
   movementsTo   StockMovement[] @relation("MovementTo")
+  purchaseOrders PurchaseOrder[]
 }
 
 // ─────────────────────────────────────────
@@ -185,6 +188,7 @@ model Product {
   transactionItems TransactionItem[]
   stockMovements   StockMovement[]
   units            ProductUnit[]
+  purchaseItems    PurchaseOrderItem[]
 
   @@unique([businessId, shortCode])
 }
@@ -427,4 +431,86 @@ model AuditLog {
   actor    User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([businessId, createdAt])
+}
+
+enum PurchaseStatus {
+  DRAFT
+  ORDERED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+model Supplier {
+  id String @id @default(uuid())
+  businessId String
+  name String
+  phone String
+  address String
+  email String?
+  archivedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  orders PurchaseOrder[]
+  @@index([businessId, name])
+}
+
+model PurchaseOrder {
+  id String @id @default(uuid())
+  businessId String
+  supplierId String
+  warehouseId String
+  supplierName String
+  status PurchaseStatus @default(DRAFT)
+  version Int @default(0)
+  notes String?
+  expectedAt DateTime?
+  orderedAt DateTime?
+  receivedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  items PurchaseOrderItem[]
+  receipts PurchaseReceipt[]
+  @@index([businessId, createdAt])
+}
+
+model PurchaseOrderItem {
+  id String @id @default(uuid())
+  orderId String
+  productId String
+  productName String
+  unit String
+  quantity Decimal @db.Decimal(16, 4)
+  receivedQuantity Decimal @default(0) @db.Decimal(16, 4)
+  unitCost Decimal @db.Decimal(16, 4)
+  order PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  receiptItems PurchaseReceiptItem[]
+  @@unique([orderId, productId])
+}
+
+model PurchaseReceipt {
+  id String @id @default(uuid())
+  orderId String
+  requestId String
+  payloadHash String
+  actorId String
+  actorName String
+  createdAt DateTime @default(now())
+  order PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  items PurchaseReceiptItem[]
+  @@unique([orderId, requestId])
+}
+
+model PurchaseReceiptItem {
+  id String @id @default(uuid())
+  receiptId String
+  orderItemId String
+  quantity Decimal @db.Decimal(16, 4)
+  receipt PurchaseReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  orderItem PurchaseOrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
 }
