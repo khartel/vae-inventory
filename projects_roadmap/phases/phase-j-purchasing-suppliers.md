@@ -1,6 +1,6 @@
 # Phase J — Purchasing & Supplier Management
 
-**Status: ⬜ Not started.** See `gap-analysis-2026-08.md`.
+**Status: ✅ Implemented and verified locally, 2026-11-12.** See `completed.md`. Apply the new migration when deploying.
 
 ## Objective
 Add a real supplier/vendor concept and a lightweight purchase-order workflow, so restocking has a paper trail: who it was bought from, at what cost, and how long it took to arrive.
@@ -22,3 +22,14 @@ Phase G (cost price) should land first — a purchase order's whole point is rec
 
 ## Expected outcome
 Restocking has the same level of accountability sales already have — a real record of the transaction, not just a quantity that appeared.
+
+
+## Implemented workflow and decisions (2026-11-12)
+
+- Victor explicitly requested full supplier/purchase-order management while redesigning the dashboard. He confirmed **latest received unit cost**, rather than weighted-average cost.
+- Supplier directory with validated international phone, address, optional email, search/pagination, edits, archive and restore. Historical orders keep the supplier-name snapshot captured when ordered.
+- Purchase orders have immutable line-name/unit/cost snapshots after ordering, a receiving warehouse, optional expected-delivery date, and notes. Drafts are editable using version checks. An order progresses DRAFT → ORDERED → PARTIALLY_RECEIVED → RECEIVED. DRAFT/ORDERED/PARTIALLY_RECEIVED can be cancelled; stock already received stays in place.
+- Receiving uses base units, supports zero/omitted quantities for undelivered lines, and records receipt lines, actor/time, RESTOCK movements and an audit event atomically with stock increments and latest-product-cost updates. Decimal line quantities/costs preserve four decimal places; totals round to two. Existing sales cost snapshots are untouched.
+- Serializable transactions, optimistic versions and per-order receipt idempotency keys prevent duplicate/stale deliveries and over-receiving. A changed payload cannot reuse a receipt reference.
+- Ordered/received timestamps provide per-order delivery lead time. No supplier payables ledger, payment processing, automated supplier messages, approval chains, or forecasting were added.
+- New migration `20261112100000_add_purchasing` is additive and was applied only to the local development and dedicated test databases. The app's existing cloud demo has not been deployed or migrated in this task.

@@ -11,7 +11,7 @@ A multi-business inventory and sales management tool — built so a small busine
 | Backend | Node.js, Express 5, Prisma 7 (Postgres), JWT auth (httpOnly cookie), zod validation |
 | Frontend | React 19, TypeScript, Vite, React Router, TanStack Query, Tailwind CSS v4, shadcn/ui |
 | Database | PostgreSQL |
-| Tests | Jest + Supertest (backend, against a dedicated test database) |
+| Tests | Jest + Supertest (backend, dedicated test database); Vitest + Testing Library (frontend) |
 
 ## Project structure
 
@@ -104,6 +104,7 @@ npm test
 | `npm run build` | Type-check and build for production (output in `dist/`) |
 | `npm run preview` | Preview the production build locally |
 | `npm run lint` | Run the linter |
+| `npm test` | Run frontend component and unit tests |
 
 ## Master key / platform admin
 
@@ -111,4 +112,6 @@ npm test
 
 ## Current status
 
-Backend and frontend are both feature-complete for the app's current scope (Products, Warehouses, Stock, POS/Sales, Team, Reports, Customers/Credit, Settings) and hardened (auth, IDOR fixes, soft-delete/audit trail, structured logging, tested). A free-tier demo deployment (Vercel + Render + Neon) is live for real-world testing. The only open phase is production deployment/ops (Docker, CI, staging, monitoring, and the long-term hosting decision) — see [`projects_roadmap/todo.md`](./projects_roadmap/todo.md). Full detail, decisions, and the phase-by-phase plan live in [`projects_roadmap/`](./projects_roadmap/).
+The app includes Inventory, Warehouses, Stock, POS/Sales, Team, Reports, Customers/Credit, Settings, and a redesigned dashboard. Supplier management and purchase orders (drafts, ordering, partial/full receiving, cancellation, receipt history, and latest-received cost updates) were added locally on 2026-11-12. Inventory, Sales, Purchases, and Suppliers have dedicated navigation entries.
+
+The existing Vercel + Render + Neon demo has **not** been updated by these local changes. When deploying this version, run `npx prisma migrate deploy`, regenerate the Prisma client as part of the build, and restart the backend. The purchasing migration has already been applied to this checkout's local development and dedicated test databases. Deployment/ops and the remaining feature backlog are tracked in [`projects_roadmap/todo.md`](./projects_roadmap/todo.md).
