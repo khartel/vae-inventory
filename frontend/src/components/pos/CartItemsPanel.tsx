@@ -1,18 +1,14 @@
-import { useState } from "react"
+import { useState, type FormEvent } from "react"
+import { ArrowRight, Minus, Pencil, Plus, ShoppingBag, Trash2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
-import { Check, Minus, Percent, Plus, ShoppingCart, Trash2, X } from "lucide-react"
 import { formatMoney } from "@/lib/format"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { SaleTotals } from "./SaleTotals"
 
-// A single line item in the POS cart. `catalogPrice` is the product's
-// original list price *for the selected pack size* (i.e. product.price *
-// unitFactor), while `unitPrice` is the (possibly discounted) price
-// actually charged for that same pack size; `discountPercent`, when set,
-// is what produced that discount and is shown/editable via
-// `DiscountControl`. `unit`/`unitFactor` describe which pack size this
-// line is in (factor 1 for the product's base unit) - `quantity` is a
-// count of that unit, and `availableStock` is always in base-unit terms,
-// so callers must compare `quantity * unitFactor` against it.
+// A product can be sold in several packs on one ticket. Prices/quantities
+// are in this line's selected unit; availableStock is always in base units.
 export interface CartLine {
   productId: string
   name: string
@@ -24,232 +20,78 @@ export interface CartLine {
   discountPercent?: number
   availableStock: number
 }
-
-// Cart lines are keyed by productId + unit (not just productId), since the
-// same product can appear as two separate lines when sold in two different
-// pack sizes in the same sale - every mutation handler below identifies
-// the target line by both.
+export type CartLineUpdate = Pick<CartLine, "quantity" | "unitPrice" | "discountPercent">
 interface CartItemsPanelProps {
   cart: CartLine[]
   currency: string
-  onIncrement: (productId: string, unit: string) => void
-  onDecrement: (productId: string, unit: string) => void
-  onPriceChange: (productId: string, unit: string, price: number) => void
-  onDiscountChange: (productId: string, unit: string, percent: number | null) => void
-  onRemove: (productId: string, unit: string) => void
+  onQuantityChange: (line: CartLine, quantity: number) => boolean
+  onUpdate: (line: CartLine, changes: CartLineUpdate) => boolean
+  onRemove: (line: CartLine) => void
+  onContinue: () => void
 }
 
-/**
- * Per-cart-line discount widget with three visual states:
- * 1. A discount is already applied — shows the struck-through catalog price,
- *    the discount badge, and a button to remove it.
- * 2. `editing` — shows a small numeric input (0-100) to type a new percent,
- *    confirmed with Enter/the check button or cancelled with Escape/the X.
- *    An out-of-range value (<=0 or >100) is silently ignored rather than
- *    surfaced as a validation error.
- * 3. Default — a plain "Add discount" link that opens the editing state.
- */
-function DiscountControl({
-  line,
-  currency,
-  onDiscountChange,
-}: {
+function CartLineEditor({ line, currency, onSave, onRemove, onClose }: {
   line: CartLine
   currency: string
-  onDiscountChange: (percent: number | null) => void
+  onSave: (changes: CartLineUpdate) => boolean
+  onRemove: () => void
+  onClose: () => void
 }) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(line.discountPercent?.toString() ?? "")
   const { t } = useTranslation()
-
-  if (line.discountPercent) {
-    return (
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs text-muted-foreground line-through">
-          {formatMoney(line.catalogPrice, currency)}
-        </span>
-        <span className="rounded-full bg-success/15 px-1.5 py-0.5 text-[10px] font-semibold text-success">
-          -{line.discountPercent}%
-        </span>
-        <button
-          type="button"
-          onClick={() => onDiscountChange(null)}
-          aria-label={t("Remove discount")}
-          className="rounded text-muted-foreground transition-colors hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <X className="size-3" />
-        </button>
-      </div>
-    )
+  const [quantity, setQuantity] = useState(String(line.quantity))
+  const [price, setPrice] = useState(String(line.unitPrice))
+  const [discount, setDiscount] = useState(String(line.discountPercent ?? 0))
+  const valid = Number.isFinite(Number(quantity)) && Number(quantity) > 0 && Number.isFinite(Number(price)) && Number(price) > 0 && Number.isFinite(Number(discount)) && Number(discount) >= 0 && Number(discount) < 100
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    if (valid && onSave({ quantity: Number(quantity), unitPrice: Number(price), discountPercent: Number(discount) > 0 ? Number(discount) : undefined })) onClose()
   }
-
-  if (editing) {
-    return (
-      <div className="flex items-center gap-1">
-        <Input
-          type="number"
-          min="0"
-          max="100"
-          step="any"
-          autoFocus
-          placeholder="%"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              const pct = parseFloat(draft)
-              if (pct > 0 && pct <= 100) onDiscountChange(pct)
-              setEditing(false)
-            }
-            if (e.key === "Escape") setEditing(false)
-          }}
-          className="h-6 w-14 text-xs"
-        />
-        <button
-          type="button"
-          onClick={() => {
-            const pct = parseFloat(draft)
-            if (pct > 0 && pct <= 100) onDiscountChange(pct)
-            setEditing(false)
-          }}
-          aria-label={t("Apply discount")}
-          className="rounded text-success transition-colors hover:text-success/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <Check className="size-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={() => setEditing(false)}
-          aria-label={t("Cancel discount")}
-          className="rounded text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <X className="size-3.5" />
-        </button>
-      </div>
-    )
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        setDraft("")
-        setEditing(true)
-      }}
-      className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-success focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <Percent className="size-3" />
-      {t("Add discount")}
-    </button>
-  )
+  return <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <DialogContent className="pocket-dialog">
+      <DialogHeader><p className="pocket-eyebrow">{t("Edit item")}</p><DialogTitle>{line.name}</DialogTitle><DialogDescription>{t("Sold by the {{unit}}", { unit: line.unit })}</DialogDescription></DialogHeader>
+      <form onSubmit={submit} className="pocket-dialog-form">
+        <div className="pocket-form-grid">
+          <label className="pocket-field">{t("Quantity")}<Input className="pocket-input" type="number" inputMode="decimal" min="0" step="any" required value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+          <label className="pocket-field">{t("Unit price")}<Input className="pocket-input" type="number" inputMode="decimal" min="0.0001" step="any" required value={price} onChange={(event) => {
+            const next = event.target.value
+            setPrice(next)
+            setDiscount(line.catalogPrice > 0 && Number(next) < line.catalogPrice ? String(Math.min(99.99, Math.round((1 - Number(next) / line.catalogPrice) * 10000) / 100)) : "0")
+          }} /></label>
+          <label className="pocket-field pocket-field-full">{t("Discount (%)")}<Input className="pocket-input" type="number" inputMode="decimal" min="0" max="99.99" step="any" required value={discount} onChange={(event) => {
+            const next = event.target.value
+            setDiscount(next)
+            if (Number(next) >= 0 && Number(next) < 100) setPrice(String(Math.round(line.catalogPrice * (1 - Number(next) / 100) * 100) / 100))
+          }} /></label>
+        </div>
+        {!valid && <p className="pocket-error" role="alert">{t("Enter a positive quantity and price, with a discount below 100%.")}</p>}
+        <div className="pocket-add-total"><span>{t("Line total")}</span><strong>{formatMoney(valid ? Number(quantity) * Number(price) : 0, currency)}</strong></div>
+        <div className="pocket-editor-actions"><Button type="button" variant="outline" className="pocket-button" onClick={onRemove}><Trash2 className="size-4" />{t("Remove product")}</Button><Button type="submit" className="pocket-button pocket-primary" disabled={!valid}>{t("Save changes")}</Button></div>
+      </form>
+    </DialogContent>
+  </Dialog>
 }
 
-/**
- * Scrollable list of the current POS sale's line items. Each line shows the
- * product name, a quantity stepper (increment disabled once `quantity`
- * reaches `availableStock`), an editable unit price, the computed line
- * total, and a `DiscountControl` for applying/removing a percent discount.
- * All mutations (`onIncrement`, `onDecrement`, `onPriceChange`,
- * `onDiscountChange`, `onRemove`) are delegated to the parent — this
- * component holds no cart state of its own beyond the per-line discount
- * editor's local draft.
- */
-export function CartItemsPanel({
-  cart,
-  currency,
-  onIncrement,
-  onDecrement,
-  onPriceChange,
-  onDiscountChange,
-  onRemove,
-}: CartItemsPanelProps) {
+/** Compact receipt with deliberate item editing rather than tiny inline fields. */
+export function CartItemsPanel({ cart, currency, onQuantityChange, onUpdate, onRemove, onContinue }: CartItemsPanelProps) {
   const { t } = useTranslation()
-
-  return (
-    <div className="flex h-full flex-col rounded-3xl border border-border/60 bg-card/60 shadow-lg backdrop-blur-2xl dark:bg-card/40">
-      <div className="flex items-center gap-2 border-b border-border/60 px-5 py-4">
-        <ShoppingCart className="size-4.5 text-success" />
-        <h2 className="font-heading text-base font-semibold">{t("Current sale")}</h2>
-        {cart.length > 0 && (
-          <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-            {cart.length === 1 ? t("{{count}} item", { count: cart.length }) : t("{{count}} items", { count: cart.length })}
-          </span>
-        )}
-      </div>
-
-      <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
-        {cart.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 py-12 text-center text-muted-foreground">
-            <ShoppingCart className="size-8 opacity-40" />
-            <p className="text-sm">{t("Search a product to add it to the sale")}</p>
+  const [editing, setEditing] = useState<CartLine | null>(null)
+  const selected = editing && cart.find((line) => line.productId === editing.productId && line.unit === editing.unit)
+  return <section className="pocket-basket" aria-label={t("Your basket")}>
+    <div className="pocket-panel-heading"><div><p className="pocket-eyebrow">{t("Review sale")}</p><h2>{t("Your basket")}</h2></div><span className="pocket-count">{t(cart.length === 1 ? "{{count}} item" : "{{count}} items", { count: cart.length })}</span></div>
+    <div className="pocket-cart-lines">
+      {cart.length === 0 ? <div className="pocket-empty"><ShoppingBag className="size-8" /><h3>{t("Your basket is ready")}</h3><p>{t("Add a product to start the sale.")}</p></div> : cart.map((line) => {
+        const otherQuantity = cart.reduce((sum, other) => sum + (other.productId === line.productId && other.unit !== line.unit ? other.quantity * other.unitFactor : 0), 0)
+        return <article className="pocket-cart-line" key={`${line.productId}-${line.unit}`}>
+          <div className="pocket-line-top"><button type="button" className="pocket-line-edit" onClick={() => setEditing(line)} aria-label={t("Edit {{name}}", { name: line.name })}>{line.name}<Pencil className="size-3" /></button><strong className="pocket-line-total">{formatMoney(line.quantity * line.unitPrice, currency)}</strong></div>
+          <p className="pocket-line-meta">{line.unit} · {formatMoney(line.unitPrice, currency)} / {line.unit}</p>
+          <div className="pocket-line-bottom"><div className="pocket-quantity"><Button type="button" variant="ghost" size="icon" aria-label={t("Decrease quantity of {{name}}", { name: line.name })} onClick={() => onQuantityChange(line, line.quantity - 1)}><Minus className="size-3.5" /></Button><span>{line.quantity}</span><Button type="button" variant="ghost" size="icon" aria-label={t("Increase quantity of {{name}}", { name: line.name })} disabled={otherQuantity + (line.quantity + 1) * line.unitFactor > line.availableStock} onClick={() => onQuantityChange(line, line.quantity + 1)}><Plus className="size-3.5" /></Button></div>
+            {line.discountPercent != null && line.discountPercent > 0 && <span className="pocket-discount">−{line.discountPercent}%</span>}
+            <Button type="button" variant="ghost" size="icon" className="pocket-remove" aria-label={t("Remove {{name}}", { name: line.name })} onClick={() => onRemove(line)}><Trash2 className="size-3.5" /></Button>
           </div>
-        ) : (
-          cart.map((line) => (
-            <div key={`${line.productId}-${line.unit}`} className="rounded-xl border border-border/60 bg-background/40 p-3">
-              <div className="mb-2 flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium leading-snug">{line.name}</p>
-                  {line.unitFactor !== 1 && (
-                    <p className="text-xs text-muted-foreground">{t("Sold by the {{unit}}", { unit: line.unit })}</p>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onRemove(line.productId, line.unit)}
-                  aria-label={t("Remove {{name}}", { name: line.name })}
-                  className="shrink-0 rounded text-muted-foreground transition-colors hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <Trash2 className="size-3.5" />
-                </button>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1 rounded-full border border-border/60 bg-card/60 p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => onDecrement(line.productId, line.unit)}
-                    className="flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    aria-label={t("Decrease quantity")}
-                  >
-                    <Minus className="size-3" />
-                  </button>
-                  <span className="w-8 text-center text-sm font-medium tabular-nums">
-                    {line.quantity}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => onIncrement(line.productId, line.unit)}
-                    disabled={(line.quantity + 1) * line.unitFactor > line.availableStock}
-                    className="flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-30"
-                    aria-label={t("Increase quantity")}
-                  >
-                    <Plus className="size-3" />
-                  </button>
-                </div>
-
-                <Input
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={line.unitPrice}
-                  onChange={(e) => onPriceChange(line.productId, line.unit, parseFloat(e.target.value) || 0)}
-                  className="h-7 w-20 text-right text-xs"
-                />
-
-                <span className="w-20 shrink-0 text-right text-sm font-semibold tabular-nums">
-                  {formatMoney(line.quantity * line.unitPrice, currency)}
-                </span>
-              </div>
-              <div className="mt-2">
-                <DiscountControl
-                  line={line}
-                  currency={currency}
-                  onDiscountChange={(percent) => onDiscountChange(line.productId, line.unit, percent)}
-                />
-              </div>
-            </div>
-          ))
-        )}
-      </div>
+        </article>
+      })}
     </div>
-  )
+    <div className="pocket-panel-footer"><SaleTotals cart={cart} currency={currency} /><Button type="button" className="pocket-button pocket-primary pocket-charge" disabled={!cart.length} onClick={onContinue}>{t("Continue to payment")}<ArrowRight className="size-4" /></Button></div>
+    {selected && <CartLineEditor key={`${selected.productId}-${selected.unit}`} line={selected} currency={currency} onSave={(changes) => onUpdate(selected, changes)} onRemove={() => { onRemove(selected); setEditing(null) }} onClose={() => setEditing(null)} />}
+  </section>
 }

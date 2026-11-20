@@ -1,12 +1,11 @@
 import { useTranslation } from "react-i18next"
-import { Banknote, HandCoins, Landmark, Loader2, Receipt } from "lucide-react"
+import { ArrowLeft, ArrowRight, Banknote, HandCoins, Landmark, Loader2, ShoppingBag } from "lucide-react"
 import { formatMoney } from "@/lib/format"
-import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { CustomerNameField } from "@/components/pos/CustomerNameField"
-import { CreditCustomerPicker, type SelectedCreditCustomer } from "@/components/pos/CreditCustomerPicker"
-import type { CartLine } from "@/components/pos/CartItemsPanel"
+import { CustomerNameField } from "./CustomerNameField"
+import { CreditCustomerPicker, type SelectedCreditCustomer } from "./CreditCustomerPicker"
+import type { CartLine } from "./CartItemsPanel"
 import type { PaymentMethod } from "@/services/transaction.service"
 
 interface SaleSummaryPanelProps {
@@ -26,170 +25,37 @@ interface SaleSummaryPanelProps {
   onAmountTenderedChange: (value: string) => void
   amountTenderedError?: string
   onComplete: () => void
+  onBack: () => void
   isSubmitting: boolean
 }
 
-/**
- * Right-hand panel of the POS register: customer field, a payment method
- * picker (Cash / Transfer / Credit), method-specific extra fields (a
- * transfer note for Transfer, an explanatory note for Credit), the running
- * total (derived from `cart` here rather than passed in), and the "Complete
- * sale" submit button. The customer field itself switches component
- * entirely by payment method: Credit uses `CreditCustomerPicker` (a strict
- * pick from the real directory — free text alone isn't enough), Cash/
- * Transfer use the free-text `CustomerNameField` (just a receipt snapshot,
- * optionally linked if it matches an existing customer). Purely
- * presentational/controlled — all state lives in the parent (`Pos.tsx`).
- */
-export function SaleSummaryPanel({
-  businessId,
-  cart,
-  currency,
-  paymentMethod,
-  onPaymentMethodChange,
-  customerName,
-  onCustomerNameChange,
-  creditCustomer,
-  onCreditCustomerChange,
-  customerFieldError,
-  transferNote,
-  onTransferNoteChange,
-  amountTendered,
-  onAmountTenderedChange,
-  amountTenderedError,
-  onComplete,
-  isSubmitting,
-}: SaleSummaryPanelProps) {
-  const total = cart.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0)
+/** Payment is a separate step; all sale data still belongs to RegisterTab. */
+export function SaleSummaryPanel({ businessId, cart, currency, paymentMethod, onPaymentMethodChange,
+  customerName, onCustomerNameChange, creditCustomer, onCreditCustomerChange, customerFieldError,
+  transferNote, onTransferNoteChange, amountTendered, onAmountTenderedChange, amountTenderedError,
+  onComplete, onBack, isSubmitting }: SaleSummaryPanelProps) {
   const { t } = useTranslation()
-
-  const tenderedNum = amountTendered.trim() === "" ? null : Number(amountTendered)
-  const changeDue = tenderedNum != null && !Number.isNaN(tenderedNum) ? tenderedNum - total : null
-
-  return (
-    <div className="flex h-full flex-col justify-between gap-4 rounded-3xl border border-border/60 bg-card/60 p-5 shadow-lg backdrop-blur-2xl dark:bg-card/40">
-      <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Receipt className="size-4.5 text-success" />
-          <h2 className="font-heading text-base font-semibold">{t("Sale details")}</h2>
-        </div>
-
-        {paymentMethod === "CREDIT" ? (
-          <CreditCustomerPicker
-            businessId={businessId}
-            value={creditCustomer}
-            onChange={onCreditCustomerChange}
-            error={customerFieldError}
-          />
-        ) : (
-          <CustomerNameField
-            businessId={businessId}
-            placeholder={t("Customer name (optional)")}
-            value={customerName}
-            onChange={onCustomerNameChange}
-            error={customerFieldError}
-          />
-        )}
-
-        <div className="grid grid-cols-3 gap-2">
-          <button
-            type="button"
-            onClick={() => onPaymentMethodChange("CASH")}
-            className={cn(
-              "flex flex-col items-center justify-center gap-1 rounded-xl border py-2.5 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-              paymentMethod === "CASH"
-                ? "border-transparent bg-gradient-to-r from-primary to-success text-primary-foreground shadow-[0_0_16px_var(--glow-primary)]"
-                : "border-border/60 text-muted-foreground hover:bg-muted"
-            )}
-          >
-            <Banknote className="size-4" />
-            {t("Cash")}
-          </button>
-          <button
-            type="button"
-            onClick={() => onPaymentMethodChange("TRANSFER")}
-            className={cn(
-              "flex flex-col items-center justify-center gap-1 rounded-xl border py-2.5 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-              paymentMethod === "TRANSFER"
-                ? "border-transparent bg-gradient-to-r from-primary to-success text-primary-foreground shadow-[0_0_16px_var(--glow-primary)]"
-                : "border-border/60 text-muted-foreground hover:bg-muted"
-            )}
-          >
-            <Landmark className="size-4" />
-            {t("Transfer")}
-          </button>
-          <button
-            type="button"
-            onClick={() => onPaymentMethodChange("CREDIT")}
-            className={cn(
-              "flex flex-col items-center justify-center gap-1 rounded-xl border py-2.5 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-              paymentMethod === "CREDIT"
-                ? "border-transparent bg-gradient-to-r from-primary to-success text-primary-foreground shadow-[0_0_16px_var(--glow-primary)]"
-                : "border-border/60 text-muted-foreground hover:bg-muted"
-            )}
-          >
-            <HandCoins className="size-4" />
-            {t("Credit")}
-          </button>
-        </div>
-
-        {paymentMethod === "CASH" && (
-          <div className="space-y-1.5">
-            <Input
-              type="number"
-              inputMode="decimal"
-              min="0"
-              step="any"
-              placeholder={t("Amount received (optional)")}
-              value={amountTendered}
-              onChange={(e) => onAmountTenderedChange(e.target.value)}
-            />
-            {amountTenderedError && <p className="text-xs text-destructive">{amountTenderedError}</p>}
-          </div>
-        )}
-
-        {paymentMethod === "TRANSFER" && (
-          <Input
-            placeholder={t("Transfer note (e.g. reference, sender name)")}
-            value={transferNote}
-            onChange={(e) => onTransferNoteChange(e.target.value)}
-          />
-        )}
-
-        {paymentMethod === "CREDIT" && (
-          <p className="text-xs text-muted-foreground">
-            {t("This sale will be recorded as owed — the customer name above is how you'll track who owes it.")}
-          </p>
-        )}
+  const total = Math.round(cart.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0) * 100) / 100
+  const tendered = amountTendered.trim() === "" ? null : Number(amountTendered)
+  const change = tendered != null && Number.isFinite(tendered) && tendered >= total ? tendered - total : null
+  const methods = [{ value: "CASH", label: t("Cash"), Icon: Banknote }, { value: "TRANSFER", label: t("Transfer"), Icon: Landmark }, { value: "CREDIT", label: t("Credit"), Icon: HandCoins }] as const
+  return <section className="pocket-payment" aria-label={t("Take payment")}>
+    <div className="pocket-payment-scroll">
+      <div className="pocket-payment-heading"><h2>{t("Take payment")}</h2><Button type="button" variant="ghost" size="icon" aria-label={t("Back to basket")} onClick={onBack} disabled={isSubmitting}><ArrowLeft className="size-4" /></Button></div>
+      <div className="pocket-payment-total"><span>{t("Total to collect")}</span><strong>{formatMoney(total, currency)}</strong></div>
+      <div className="pocket-methods" aria-label={t("Payment method")}>{methods.map(({ value, label, Icon }) => <Button key={value} type="button" variant="outline" className="pocket-method" aria-pressed={paymentMethod === value} onClick={() => onPaymentMethodChange(value)} disabled={isSubmitting}><Icon className="size-4" />{label}</Button>)}</div>
+      <div className="pocket-field"><p>{paymentMethod === "CREDIT" ? t("Credit customer · required") : t("Customer · optional")}</p>
+        {paymentMethod === "CREDIT" ? <CreditCustomerPicker businessId={businessId} value={creditCustomer} onChange={onCreditCustomerChange} error={customerFieldError} /> : <CustomerNameField businessId={businessId} value={customerName} onChange={onCustomerNameChange} placeholder={t("Customer name (optional)")} />}
       </div>
-
-      <div className="space-y-4">
-        <div className="rounded-xl bg-muted/60 px-4 py-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-muted-foreground">{t("Total")}</span>
-            <span className="font-heading text-2xl font-bold tabular-nums">
-              {formatMoney(total, currency)}
-            </span>
-          </div>
-          {paymentMethod === "CASH" && changeDue != null && changeDue >= 0 && (
-            <div className="mt-1.5 flex items-center justify-between border-t border-border/60 pt-1.5">
-              <span className="text-sm font-medium text-muted-foreground">{t("Change due")}</span>
-              <span className="font-heading text-lg font-semibold text-success tabular-nums">
-                {formatMoney(changeDue, currency)}
-              </span>
-            </div>
-          )}
-        </div>
-
-        <Button
-          className="w-full rounded-xl bg-gradient-to-r from-primary to-success py-6 text-base font-semibold text-primary-foreground shadow-[0_0_24px_var(--glow-primary)] hover:opacity-90"
-          disabled={cart.length === 0 || isSubmitting}
-          onClick={onComplete}
-        >
-          {isSubmitting && <Loader2 className="size-4 animate-spin" />}
-          {t("Complete sale")}
-        </Button>
-      </div>
+      {paymentMethod === "CASH" && <>
+        <label className="pocket-field">{t("Cash received · optional")}<Input type="number" inputMode="decimal" min="0" step="any" className="pocket-input" value={amountTendered} onChange={(event) => onAmountTenderedChange(event.target.value)} placeholder={formatMoney(0, currency)} aria-invalid={!!amountTenderedError} /></label>
+        {amountTenderedError && <p className="pocket-error" role="alert">{amountTenderedError}</p>}
+        <div className="pocket-change" aria-live="polite"><span>{t("Change to return")}</span><strong>{change == null ? "—" : formatMoney(change, currency)}</strong></div>
+      </>}
+      {paymentMethod === "TRANSFER" && <label className="pocket-field">{t("Transfer reference · optional")}<Input className="pocket-input" placeholder={t("Reference or sender name")} value={transferNote} onChange={(event) => onTransferNoteChange(event.target.value)} /></label>}
+      {paymentMethod === "CREDIT" && <p className="pocket-credit-note">{t("This sale will be added to the selected customer’s credit balance.")}</p>}
+      <div className="pocket-review-strip"><ShoppingBag className="size-4" /><span>{t(cart.length === 1 ? "{{count}} product line" : "{{count}} product lines", { count: cart.length })}</span></div>
     </div>
-  )
+    <div className="pocket-panel-footer"><Button type="button" className="pocket-button pocket-primary pocket-charge" disabled={!cart.length || isSubmitting} onClick={onComplete}>{isSubmitting ? <><Loader2 className="size-4 animate-spin" />{t("Recording sale…")}</> : <><span>{t("Charge {{amount}}", { amount: formatMoney(total, currency) })}</span><ArrowRight className="size-4" /></>}</Button></div>
+  </section>
 }
