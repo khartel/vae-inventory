@@ -1,84 +1,43 @@
-import type { PhoneInputCountry as Country } from "@/components/ui/phone-input"
+import { getCountries, type Country } from "react-phone-number-input"
+import en from "react-phone-number-input/locale/en.json"
+import fr from "react-phone-number-input/locale/fr.json"
 
-// Maps the country *names* stored on a Business (see business.service.ts's
-// getCountries()/backend's currencies.js, which use full names like
-// "Nigeria" rather than ISO codes) to the ISO 3166-1 alpha-2 code the
-// phone-input library needs for its `defaultCountry` prop. Covers the same
-// country list the app already supports at business-creation time. A name
-// not found here just means the phone input has no preset default country -
-// not a hard failure, the user can still pick one manually.
-const COUNTRY_NAME_TO_ISO: Record<string, Country> = {
-  Togo: "TG",
-  Benin: "BJ",
-  Senegal: "SN",
-  Mali: "ML",
-  "Burkina Faso": "BF",
-  Niger: "NE",
-  "Guinea-Bissau": "GW",
-  "Ivory Coast": "CI",
-  Cameroon: "CM",
-  Chad: "TD",
-  Gabon: "GA",
-  Congo: "CG",
-  Nigeria: "NG",
-  Ghana: "GH",
-  Kenya: "KE",
-  "South Africa": "ZA",
-  Ethiopia: "ET",
-  Tanzania: "TZ",
-  Uganda: "UG",
-  Rwanda: "RW",
-  Egypt: "EG",
-  Morocco: "MA",
-  Algeria: "DZ",
-  Tunisia: "TN",
-  Angola: "AO",
-  Mozambique: "MZ",
-  Zambia: "ZM",
-  Zimbabwe: "ZW",
-  "United Kingdom": "GB",
-  Germany: "DE",
-  France: "FR",
-  Italy: "IT",
-  Spain: "ES",
-  Portugal: "PT",
-  Netherlands: "NL",
-  Belgium: "BE",
-  Switzerland: "CH",
-  Sweden: "SE",
-  Norway: "NO",
-  Denmark: "DK",
-  Poland: "PL",
-  Russia: "RU",
-  "United States": "US",
-  Canada: "CA",
-  Brazil: "BR",
-  Mexico: "MX",
-  Argentina: "AR",
-  Colombia: "CO",
-  Chile: "CL",
-  Peru: "PE",
-  China: "CN",
-  Japan: "JP",
-  India: "IN",
-  "South Korea": "KR",
-  Singapore: "SG",
-  Malaysia: "MY",
-  Indonesia: "ID",
-  Thailand: "TH",
-  Vietnam: "VN",
-  Philippines: "PH",
-  Pakistan: "PK",
-  Bangladesh: "BD",
-  UAE: "AE",
-  "Saudi Arabia": "SA",
-  Qatar: "QA",
-  Kuwait: "KW",
-  Australia: "AU",
-  "New Zealand": "NZ",
+export function normalizeCountrySearch(value: string): string {
+  return value.normalize("NFKD").replace(/\p{M}/gu, "").toLocaleLowerCase().replace(/[’']/g, " ").replace(/\s+/g, " ").trim()
 }
 
-/** Best-effort lookup of a phone-input default country from a stored business/country name. Returns undefined (no preset) if unrecognized. */
+const aliases: Record<string, Country> = {
+  UAE: "AE",
+  "Ivory Coast": "CI",
+  "Côte d’Ivoire": "CI",
+  "Congo": "CG",
+  "Republic of the Congo": "CG",
+  "Democratic Republic of the Congo": "CD",
+  Czechia: "CZ",
+  Türkiye: "TR",
+  "Cabo Verde": "CV",
+  Eswatini: "SZ",
+  "Timor-Leste": "TL",
+  "United States of America": "US",
+}
+const countryNames = new Map<string, Country>()
+const searchNames = new Map<Country, string[]>()
+const displayNames = typeof Intl.DisplayNames === "function" ? [new Intl.DisplayNames(["en"], { type: "region" }), new Intl.DisplayNames(["fr"], { type: "region" })] : []
+for (const iso of getCountries()) {
+  const names = [iso, en[iso], fr[iso], ...displayNames.map((display) => display.of(iso))].filter((name): name is string => !!name)
+  searchNames.set(iso, names)
+  names.forEach((name) => countryNames.set(normalizeCountrySearch(name), iso))
+}
+for (const [name, iso] of Object.entries(aliases)) {
+  countryNames.set(normalizeCountrySearch(name), iso)
+  searchNames.get(iso)?.push(name)
+}
+
+/** Resolve stored names, English/French labels, common aliases or ISO codes. */
 export function countryNameToIso(name: string | undefined): Country | undefined {
-  return name ? COUNTRY_NAME_TO_ISO[name] : undefined
+  return name ? countryNames.get(normalizeCountrySearch(name)) : undefined
+}
+
+export function countrySearchTerms(iso: Country | undefined): string {
+  return iso ? (searchNames.get(iso) ?? [iso]).join(" ") : ""
 }

@@ -7,7 +7,7 @@ import { Loader2, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
 import * as businessService from "@/services/business.service"
-import { countryNameToIso } from "@/lib/countries"
+import { countryNameToIso, countrySearchTerms } from "@/lib/countries"
 import { ApiError } from "@/lib/api-client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -22,13 +22,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { CountryPicker } from "@/components/ui/country-picker"
 
 // Validation for the new-business form. Email is optional (empty string allowed).
 const schema = z.object({
@@ -162,23 +156,22 @@ export function CreateBusinessDialog({
 
           <div className="space-y-1.5">
             <Label htmlFor="biz-country">{t("Country")}</Label>
-            <Select
+            <CountryPicker
+              id="biz-country"
+              label={t("Country")}
               value={watch("country")}
-              onValueChange={(value) => setValue("country", value, { shouldValidate: true })}
-            >
-              <SelectTrigger id="biz-country" className="w-full">
-                <SelectValue
-                  placeholder={countriesQuery.isLoading ? t("Loading countries...") : t("Select a country")}
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {countriesQuery.data?.map((c) => (
-                  <SelectItem key={c.country} value={c.country}>
-                    {c.country} ({c.currency.code})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              disabled={countriesQuery.isLoading}
+              placeholder={countriesQuery.isLoading ? t("Loading countries...") : t("Select a country")}
+              options={(countriesQuery.data ?? []).map((option) => ({
+                value: option.country,
+                label: option.country,
+                detail: option.currency.code,
+                iso: countryNameToIso(option.country),
+                search: `${countrySearchTerms(countryNameToIso(option.country))} ${option.currency.name}`,
+              }))}
+              onChange={(value) => setValue("country", value, { shouldValidate: true })}
+            />
+            {countriesQuery.isError && <Button type="button" variant="ghost" onClick={() => countriesQuery.refetch()}>{t("Could not load countries. Retry")}</Button>}
             {errors.country?.message && <p className="text-xs text-destructive">{t(errors.country.message)}</p>}
           </div>
 
