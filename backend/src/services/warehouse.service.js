@@ -31,34 +31,37 @@ const createWarehouse = async ({ businessId, name, location, isPrimary, userId }
     throw new AppError("Business not found", 404);
   }
 
-  // If this warehouse is set as primary
-  // remove primary from all other warehouses first
-  if (isPrimary) {
-    await prisma.warehouse.updateMany({
-      where: { businessId },
-      data: { isPrimary: false },
+  const warehouse = await prisma.$transaction(async (tx) => {
+    // If this warehouse is set as primary, demote all others atomically
+    if (isPrimary) {
+      await tx.warehouse.updateMany({
+        where: { businessId },
+        data: { isPrimary: false },
+      });
+    }
+
+    // If this is the first (active) warehouse, make it primary automatically
+    const warehouseCount = await tx.warehouse.count({
+      where: { businessId, deletedAt: null },
     });
-  }
 
-  // If this is the first (active) warehouse, make it primary automatically
-  const warehouseCount = await prisma.warehouse.count({
-    where: { businessId, deletedAt: null },
-  });
+    const shouldBePrimary = isPrimary || warehouseCount === 0;
 
-  const shouldBePrimary = isPrimary || warehouseCount === 0;
-
-  const warehouse = await prisma.warehouse.create({
-    data: {
-      businessId,
-      name,
-      location,
-      isPrimary: shouldBePrimary,
-    },
-    include: {
-      _count: {
-        select: { stock: true },
+    return tx.warehouse.create({
+      data: {
+        businessId,
+        name,
+        location,
+        isPrimary: shouldBePrimary,
       },
-    },
+      include: {
+        _count: {
+          select: {
+            stock: { where: { product: { deletedAt: null } } },
+          },
+        },
+      },
+    });
   });
 
   return warehouse;
@@ -77,6 +80,7 @@ const getWarehouses = async (businessId) => {
       where: { businessId, deletedAt: null },
       include: {
         stock: {
+          where: { product: { deletedAt: null } },
           include: {
             product: {
               select: {
@@ -89,7 +93,7 @@ const getWarehouses = async (businessId) => {
         },
         _count: {
           select: {
-            stock: true,
+            stock: { where: { product: { deletedAt: null } } },
             transactions: true,
           },
         },
@@ -130,6 +134,7 @@ const getWarehouseById = async (warehouseId, businessId) => {
       },
       include: {
         stock: {
+          where: { product: { deletedAt: null } },
           include: {
             product: {
               select: {
@@ -146,7 +151,7 @@ const getWarehouseById = async (warehouseId, businessId) => {
         },
         _count: {
           select: {
-            stock: true,
+            stock: { where: { product: { deletedAt: null } } },
             transactions: true,
           },
         },
@@ -189,16 +194,18 @@ const setPrimaryWarehouse = async (warehouseId, businessId) => {
     throw new AppError("Warehouse not found", 404);
   }
 
-  // Remove primary from all warehouses in this business
-  await prisma.warehouse.updateMany({
-    where: { businessId },
-    data: { isPrimary: false },
-  });
+  // Demote all warehouses and promote this one atomically so the business is
+  // never momentarily left without a primary warehouse.
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.warehouse.updateMany({
+      where: { businessId },
+      data: { isPrimary: false },
+    });
 
-  // Set this one as primary
-  const updated = await prisma.warehouse.update({
-    where: { id: warehouseId },
-    data: { isPrimary: true },
+    return tx.warehouse.update({
+      where: { id: warehouseId },
+      data: { isPrimary: true },
+    });
   });
 
   return updated;

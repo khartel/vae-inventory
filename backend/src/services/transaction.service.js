@@ -1,6 +1,9 @@
 const prisma = require("../utils/prisma");
 const AppError = require("../utils/AppError");
 const { recordAudit } = require("../utils/auditLog");
+const { computeCreditStats, withCreditStats } = require("../utils/creditBalance");
+const { startOfDay, endOfDay, startOfWeek, startOfMonth } = require("date-fns");
+const { parseCalendarDate } = require("../utils/parseDate");
 
 // Shared include shape so every read path (create/list/get-one) returns the
 // same structure, including the credit-payment history needed to compute
@@ -32,26 +35,6 @@ const TRANSACTION_INCLUDE = {
     },
     orderBy: { createdAt: "asc" },
   },
-};
-
-/**
- * Attach computed amountPaid/balanceDue (only meaningful for CREDIT sales,
- * but harmless — 0 paid / balanceDue === totalAmount — for others). A
- * CREDIT_BALANCE return isn't a payment (it's not in `payments`, on
- * purpose — see createReturn's doc comment), so it's subtracted separately
- * here rather than folded into amountPaid, keeping "what was actually paid"
- * and "what was refunded off the balance" distinguishable to callers.
- */
-const withCreditStats = (transaction) => {
-  const amountPaid =
-    Math.round(transaction.payments.reduce((sum, p) => sum + p.amount, 0) * 100) / 100;
-  const creditReductionFromReturns = (transaction.returns ?? [])
-    .filter((r) => r.refundMethod === "CREDIT_BALANCE")
-    .reduce((sum, r) => sum + r.refundAmount, 0);
-  const balanceDue =
-    Math.round((transaction.totalAmount - amountPaid - creditReductionFromReturns) * 100) / 100;
-
-  return { ...transaction, amountPaid, balanceDue };
 };
 
 /**
@@ -170,34 +153,16 @@ const createTransaction = async ({
     })
   );
 
-  // Check stock sufficiency per *product*, summing quantitySold across every
-  // line item for that product first - a sale can list the same product
+  // Aggregate requested quantity per *product*, summing quantitySold across
+  // every line item for that product first - a sale can list the same product
   // twice if it was rung up in two different pack sizes (e.g. "2 dozen" and
-  // "3 pcs" of the same item, via ProductUnit), so checking each line in
-  // isolation would under-count what's actually being taken out of stock.
+  // "3 pcs" of the same item, via ProductUnit).
   const totalRequestedByProduct = new Map();
   for (const item of itemsWithDetails) {
     totalRequestedByProduct.set(
       item.productId,
       (totalRequestedByProduct.get(item.productId) ?? 0) + item.quantitySold
     );
-  }
-
-  for (const [productId, totalRequested] of totalRequestedByProduct) {
-    const stock = await prisma.warehouseStock.findUnique({
-      where: {
-        warehouseId_productId: { warehouseId: primaryWarehouse.id, productId },
-      },
-    });
-    const { productName, productUnit } = itemsWithDetails.find((i) => i.productId === productId);
-
-    if (!stock || stock.quantity < totalRequested) {
-      throw new AppError(
-        `Insufficient stock for "${productName}". ` +
-        `Available: ${stock ? stock.quantity : 0} ${productUnit}, ` +
-        `Requested: ${totalRequested} ${productUnit}`
-      );
-    }
   }
 
   const totalAmount = itemsWithDetails.reduce(
@@ -222,6 +187,38 @@ const createTransaction = async ({
   const trimmedCustomerName = customerName?.trim();
 
   const transaction = await prisma.$transaction(async (tx) => {
+    // Atomically check sufficiency and decrement stock inside the transaction
+    // (sorted by productId to avoid lock-order deadlocks) so concurrent
+    // checkouts across registers can never drive stock negative.
+    for (const [productId, totalRequested] of [...totalRequestedByProduct.entries()].sort(([a], [b]) =>
+      a.localeCompare(b)
+    )) {
+      const deducted = await tx.warehouseStock.updateMany({
+        where: {
+          warehouseId: primaryWarehouse.id,
+          productId,
+          quantity: { gte: totalRequested },
+        },
+        data: {
+          quantity: { decrement: totalRequested },
+        },
+      });
+
+      if (deducted.count === 0) {
+        const stock = await tx.warehouseStock.findUnique({
+          where: {
+            warehouseId_productId: { warehouseId: primaryWarehouse.id, productId },
+          },
+        });
+        const { productName, productUnit } = itemsWithDetails.find((i) => i.productId === productId);
+        throw new AppError(
+          `Insufficient stock for "${productName}". ` +
+          `Available: ${stock ? stock.quantity : 0} ${productUnit}, ` +
+          `Requested: ${totalRequested} ${productUnit}`
+        );
+      }
+    }
+
     // Resolve who the sale is attributed to. CREDIT requires an existing,
     // real customer (never typed free-text, never auto-created) - see the
     // JSDoc above. CASH/TRANSFER link to an existing customer on an exact
@@ -245,7 +242,7 @@ const createTransaction = async ({
       resolvedCustomerId = existingCustomer?.id ?? null;
     }
 
-    const newTransaction = await tx.transaction.create({
+    return tx.transaction.create({
       data: {
         businessId,
         warehouseId: primaryWarehouse.id,
@@ -272,29 +269,6 @@ const createTransaction = async ({
       },
       include: TRANSACTION_INCLUDE,
     });
-
-    // An atomic `decrement` (rather than computing `currentStock -
-    // quantitySold` off a pre-transaction read) is required here: two items
-    // in the same sale can reference the same product (sold in two
-    // different pack sizes), so their updates must accumulate instead of
-    // each overwriting the other with a stale snapshot.
-    await Promise.all(
-      itemsWithDetails.map((item) =>
-        tx.warehouseStock.update({
-          where: {
-            warehouseId_productId: {
-              warehouseId: primaryWarehouse.id,
-              productId: item.productId,
-            },
-          },
-          data: {
-            quantity: { decrement: item.quantitySold },
-          },
-        })
-      )
-    );
-
-    return newTransaction;
   });
 
   return withCreditStats(transaction);
@@ -353,14 +327,11 @@ const getTransactions = async ({
     where.createdAt = {};
 
     if (startDate) {
-      where.createdAt.gte = new Date(startDate);
+      where.createdAt.gte = startOfDay(parseCalendarDate(startDate));
     }
 
     if (endDate) {
-      // Set end date to end of that day
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      where.createdAt.lte = end;
+      where.createdAt.lte = endOfDay(parseCalendarDate(endDate));
     }
   }
 
@@ -429,37 +400,39 @@ const getTransactionById = async (transactionId, businessId) => {
  *   fully paid, amount <= 0, or amount exceeds the outstanding balance.
  */
 const recordCreditPayment = async (transactionId, businessId, { amount, recordedById }) => {
-  const transaction = await prisma.transaction.findFirst({
-    where: { id: transactionId, businessId },
-    include: { payments: true },
-  });
-
-  if (!transaction) {
-    throw new AppError("Transaction not found", 404);
-  }
-
-  if (transaction.paymentMethod !== "CREDIT") {
-    throw new AppError("Only credit sales can have payments recorded against them");
-  }
-
-  const amountPaidSoFar = transaction.payments.reduce((sum, p) => sum + p.amount, 0);
-  const balanceDue = Math.round((transaction.totalAmount - amountPaidSoFar) * 100) / 100;
-
-  if (balanceDue <= 0) {
-    throw new AppError("This sale has already been fully paid");
-  }
-
   if (amount <= 0) {
     throw new AppError("Payment amount must be greater than 0");
   }
 
-  if (amount > balanceDue + 0.01) {
-    throw new AppError(`Payment can't exceed the outstanding balance of ${balanceDue}`);
-  }
-
-  const isNowSettled = amount >= balanceDue - 0.01;
-
   const updated = await prisma.$transaction(async (tx) => {
+    const transaction = await tx.transaction.findFirst({
+      where: { id: transactionId, businessId },
+      include: {
+        payments: true,
+        returns: { select: { refundMethod: true, refundAmount: true } },
+      },
+    });
+
+    if (!transaction) {
+      throw new AppError("Transaction not found", 404);
+    }
+
+    if (transaction.paymentMethod !== "CREDIT") {
+      throw new AppError("Only credit sales can have payments recorded against them");
+    }
+
+    const { balanceDue } = computeCreditStats(transaction);
+
+    if (balanceDue <= 0) {
+      throw new AppError("This sale has already been fully paid");
+    }
+
+    if (amount > balanceDue + 0.01) {
+      throw new AppError(`Payment can't exceed the outstanding balance of ${balanceDue}`);
+    }
+
+    const isNowSettled = amount >= balanceDue - 0.01;
+
     await tx.creditPayment.create({
       data: { transactionId, amount, recordedById },
     });
@@ -568,65 +541,72 @@ const undoCreditPayment = async (transactionId, paymentId, businessId, actorId) 
  *   method isn't valid for this transaction's current state.
  */
 const createReturn = async (transactionId, businessId, { items, refundMethod, reason, processedById }) => {
-  const transaction = await prisma.transaction.findFirst({
-    where: { id: transactionId, businessId },
-    include: {
-      items: true,
-      payments: true,
-      returns: { include: { items: true } },
-    },
-  });
-
-  if (!transaction) {
-    throw new AppError("Transaction not found", 404);
-  }
-
-  const returnItems = items.map(({ transactionItemId, quantityReturned }) => {
-    const transactionItem = transaction.items.find((i) => i.id === transactionItemId);
-    if (!transactionItem) {
-      throw new AppError(`Item ${transactionItemId} does not belong to this sale`, 404);
-    }
-
-    const alreadyReturned = transaction.returns
-      .flatMap((r) => r.items)
-      .filter((ri) => ri.transactionItemId === transactionItemId)
-      .reduce((sum, ri) => sum + ri.quantityReturned, 0);
-
-    const returnable = transactionItem.quantitySold - alreadyReturned;
-    if (quantityReturned > returnable + 0.0001) {
-      throw new AppError(
-        `Can't return ${quantityReturned} of this item — only ${returnable} left to return`
-      );
-    }
-
-    // Proportional to the item's actual subtotal (not a re-derived catalog
-    // price), so a sale-time discount is inherently respected.
-    const refundAmount =
-      Math.round((quantityReturned * (transactionItem.subtotal / transactionItem.quantitySold)) * 100) / 100;
-
-    return { transactionItem, quantityReturned, refundAmount };
-  });
-
-  const totalRefundAmount = Math.round(returnItems.reduce((sum, ri) => sum + ri.refundAmount, 0) * 100) / 100;
-
-  if (refundMethod === "CREDIT_BALANCE") {
-    if (transaction.paymentMethod !== "CREDIT") {
-      throw new AppError("Only credit sales can have their balance reduced by a return");
-    }
-    const { balanceDue } = withCreditStats(transaction);
-    if (balanceDue <= 0) {
-      throw new AppError("This sale is already fully paid — record a cash refund instead");
-    }
-    if (totalRefundAmount > balanceDue + 0.01) {
-      throw new AppError(
-        `This return (${totalRefundAmount}) is worth more than the outstanding balance (${balanceDue}) — record a cash refund instead`
-      );
-    }
+  // Reject duplicate transactionItemId entries in the same request so each
+  // line's returnable-quantity cap can't be bypassed by repeating an item.
+  const uniqueIds = new Set(items.map((item) => item.transactionItemId));
+  if (uniqueIds.size !== items.length) {
+    throw new AppError("Each item can only appear once in a return", 400);
   }
 
   const actor = await prisma.user.findUnique({ where: { id: processedById } });
 
   const updated = await prisma.$transaction(async (tx) => {
+    const transaction = await tx.transaction.findFirst({
+      where: { id: transactionId, businessId },
+      include: {
+        items: true,
+        payments: true,
+        returns: { include: { items: true } },
+      },
+    });
+
+    if (!transaction) {
+      throw new AppError("Transaction not found", 404);
+    }
+
+    const returnItems = items.map(({ transactionItemId, quantityReturned }) => {
+      const transactionItem = transaction.items.find((i) => i.id === transactionItemId);
+      if (!transactionItem) {
+        throw new AppError(`Item ${transactionItemId} does not belong to this sale`, 404);
+      }
+
+      const alreadyReturned = transaction.returns
+        .flatMap((r) => r.items)
+        .filter((ri) => ri.transactionItemId === transactionItemId)
+        .reduce((sum, ri) => sum + ri.quantityReturned, 0);
+
+      const returnable = transactionItem.quantitySold - alreadyReturned;
+      if (quantityReturned > returnable + 0.0001) {
+        throw new AppError(
+          `Can't return ${quantityReturned} of this item — only ${returnable} left to return`
+        );
+      }
+
+      // Proportional to the item's actual subtotal (not a re-derived catalog
+      // price), so a sale-time discount is inherently respected.
+      const refundAmount =
+        Math.round((quantityReturned * (transactionItem.subtotal / transactionItem.quantitySold)) * 100) / 100;
+
+      return { transactionItem, quantityReturned, refundAmount };
+    });
+
+    const totalRefundAmount = Math.round(returnItems.reduce((sum, ri) => sum + ri.refundAmount, 0) * 100) / 100;
+    const { balanceDue } = computeCreditStats(transaction);
+
+    if (refundMethod === "CREDIT_BALANCE") {
+      if (transaction.paymentMethod !== "CREDIT") {
+        throw new AppError("Only credit sales can have their balance reduced by a return");
+      }
+      if (balanceDue <= 0) {
+        throw new AppError("This sale is already fully paid — record a cash refund instead");
+      }
+      if (totalRefundAmount > balanceDue + 0.01) {
+        throw new AppError(
+          `This return (${totalRefundAmount}) is worth more than the outstanding balance (${balanceDue}) — record a cash refund instead`
+        );
+      }
+    }
+
     const createdReturn = await tx.return.create({
       data: {
         businessId,
@@ -649,34 +629,22 @@ const createReturn = async (transactionId, businessId, { items, refundMethod, re
     // not gated on the product's deletedAt, since a since-discontinued
     // product must still be returnable.
     for (const ri of returnItems) {
-      const existingStock = await tx.warehouseStock.findUnique({
+      await tx.warehouseStock.upsert({
         where: {
           warehouseId_productId: {
             warehouseId: transaction.warehouseId,
             productId: ri.transactionItem.productId,
           },
         },
+        create: {
+          warehouseId: transaction.warehouseId,
+          productId: ri.transactionItem.productId,
+          quantity: ri.quantityReturned,
+        },
+        update: {
+          quantity: { increment: ri.quantityReturned },
+        },
       });
-
-      if (existingStock) {
-        await tx.warehouseStock.update({
-          where: {
-            warehouseId_productId: {
-              warehouseId: transaction.warehouseId,
-              productId: ri.transactionItem.productId,
-            },
-          },
-          data: { quantity: { increment: ri.quantityReturned } },
-        });
-      } else {
-        await tx.warehouseStock.create({
-          data: {
-            warehouseId: transaction.warehouseId,
-            productId: ri.transactionItem.productId,
-            quantity: ri.quantityReturned,
-          },
-        });
-      }
 
       await tx.stockMovement.create({
         data: {
@@ -699,7 +667,7 @@ const createReturn = async (transactionId, businessId, { items, refundMethod, re
     const isNowSettled =
       refundMethod === "CREDIT_BALANCE" &&
       !transaction.paidAt &&
-      withCreditStats(transaction).balanceDue - totalRefundAmount <= 0.01;
+      balanceDue - totalRefundAmount <= 0.01;
 
     const result = await tx.transaction.update({
       where: { id: transactionId },
@@ -739,22 +707,16 @@ const createReturn = async (transactionId, businessId, { items, refundMethod, re
  * @param {string} businessId
  * @returns {Promise<object>} `{ today, byEmployee, topProducts, weekly, monthly }`.
  */
-const getTransactionSummary = async (businessId) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+const getTransactionSummary = async (businessId, now = new Date()) => {
+  const today = startOfDay(now);
+  const endOfToday = endOfDay(now);
 
-  const endOfToday = new Date();
-  endOfToday.setHours(23, 59, 59, 999);
-
-  // Start of current week (Monday)
-  const startOfWeek = new Date();
-  startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay() + 1);
-  startOfWeek.setHours(0, 0, 0, 0);
+  // Start of current week (Monday) — date-fns handles Sunday (getDay() === 0)
+  // properly instead of jumping forward to next Monday.
+  const weekStart = startOfWeek(now, { weekStartsOn: 1 });
 
   // Start of current month
-  const startOfMonth = new Date();
-  startOfMonth.setDate(1);
-  startOfMonth.setHours(0, 0, 0, 0);
+  const monthStart = startOfMonth(now);
 
   // Todays transactions
   const todayTransactions = await prisma.transaction.findMany({
@@ -792,7 +754,7 @@ const getTransactionSummary = async (businessId) => {
   const weeklyTotal = await prisma.transaction.aggregate({
     where: {
       businessId,
-      createdAt: { gte: startOfWeek, lte: endOfToday },
+      createdAt: { gte: weekStart, lte: endOfToday },
     },
     _sum: { totalAmount: true },
     _count: true,
@@ -802,7 +764,7 @@ const getTransactionSummary = async (businessId) => {
   const monthlyTotal = await prisma.transaction.aggregate({
     where: {
       businessId,
-      createdAt: { gte: startOfMonth, lte: endOfToday },
+      createdAt: { gte: monthStart, lte: endOfToday },
     },
     _sum: { totalAmount: true },
     _count: true,

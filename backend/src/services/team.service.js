@@ -54,24 +54,55 @@ const addTeamMember = async ({ businessId, fullName, username, phone, email, rol
   // Clean email — convert empty string to null
   const cleanEmail = email && email.trim() !== "" ? email.trim() : null;
 
-  const adder = await prisma.user.findUnique({ where: { id: addedById } });
+  const [adder, business] = await Promise.all([
+    prisma.user.findUnique({ where: { id: addedById } }),
+    prisma.business.findUnique({ where: { id: businessId }, select: { ownerId: true } }),
+  ]);
+
+  if (!business) {
+    throw new AppError("Business not found", 404);
+  }
 
   // Check if username already exists
   const existingUsername = await prisma.user.findUnique({
     where: { username },
+    include: {
+      businessUsers: {
+        include: {
+          business: { select: { ownerId: true } },
+        },
+      },
+    },
   });
 
   if (existingUsername) {
     // If user exists, check if they are already in this business
-    const alreadyInBusiness = await prisma.businessUser.findFirst({
-      where: {
-        businessId,
-        userId: existingUsername.id,
-      },
-    });
+    const alreadyInBusiness = existingUsername.businessUsers.some(
+      (bu) => bu.businessId === businessId
+    );
 
     if (alreadyInBusiness) {
       throw new AppError("This user is already a member of this business", 409);
+    }
+
+    // Tenant boundary: never allow linking a SUPERADMIN account or a user
+    // belonging to another owner's business (or an unattached account from
+    // another tenant) by guessing their username. An owner may only reuse
+    // an existing staff account that is already a member of another business
+    // under the same owner and not tied to any other owner.
+    const belongsToSameOwner = existingUsername.businessUsers.some(
+      (bu) => bu.business.ownerId === business.ownerId
+    );
+    const belongsToOtherOwner = existingUsername.businessUsers.some(
+      (bu) => bu.business.ownerId !== business.ownerId
+    );
+
+    if (
+      existingUsername.role === "SUPERADMIN" ||
+      !belongsToSameOwner ||
+      belongsToOtherOwner
+    ) {
+      throw new AppError("Username is already taken", 409);
     }
 
     // Add existing user to this business
@@ -345,19 +376,29 @@ const updateTeamMemberRole = async (businessUserId, businessId, role, requesterI
 
 /**
  * Reset a team member's password to a new random temporary one.
- * Requester cannot reset their own password this way, and the business
- * owner's password can never be reset through the Team page.
+ * Requester cannot reset their own password this way, and neither the
+ * business owner nor any global SUPERADMIN (or user tied to another owner's
+ * business) can have their password reset through the Team page. Also
+ * revokes existing sessions (`tokenVersion` increment) and writes an
+ * `AuditLog` entry atomically.
  */
 const resetTeamMemberPassword = async (businessUserId, businessId, requesterId) => {
-  const businessUser = await prisma.businessUser.findFirst({
-    where: {
-      id: businessUserId,
-      businessId,
-    },
-    include: {
-      user: true,
-    },
-  });
+  const [businessUser, business, requester] = await Promise.all([
+    prisma.businessUser.findFirst({
+      where: {
+        id: businessUserId,
+        businessId,
+      },
+      include: {
+        user: true,
+      },
+    }),
+    prisma.business.findUnique({
+      where: { id: businessId },
+      select: { ownerId: true },
+    }),
+    prisma.user.findUnique({ where: { id: requesterId } }),
+  ]);
 
   if (!businessUser) {
     throw new AppError("Team member not found", 404);
@@ -367,19 +408,50 @@ const resetTeamMemberPassword = async (businessUserId, businessId, requesterId) 
     throw new AppError("Use Settings to change your own password");
   }
 
-  if (businessUser.role === "SUPERADMIN") {
+  if (businessUser.role === "SUPERADMIN" || businessUser.user.role === "SUPERADMIN") {
     throw new AppError("Cannot reset the business owner's password", 403);
+  }
+
+  // Defense in depth: ensure resetting a global User password can never
+  // affect a user belonging to another owner's business.
+  if (business) {
+    const foreignMembership = await prisma.businessUser.findFirst({
+      where: {
+        userId: businessUser.userId,
+        business: { ownerId: { not: business.ownerId } },
+      },
+    });
+
+    if (foreignMembership) {
+      throw new AppError(
+        "Cannot reset password for a user belonging to another owner's business",
+        403
+      );
+    }
   }
 
   const newPassword = generateTempPassword();
   const passwordHash = await bcrypt.hash(newPassword, 12);
 
-  await prisma.user.update({
-    where: { id: businessUser.userId },
-    data: {
-      passwordHash,
-      mustChangePassword: true,
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: businessUser.userId },
+      data: {
+        passwordHash,
+        mustChangePassword: true,
+        tokenVersion: { increment: 1 },
+      },
+    });
+
+    await recordAudit(tx, {
+      businessId,
+      actorId: requesterId,
+      actorName: requester?.fullName ?? null,
+      action: "team.password_reset",
+      entityType: "BusinessUser",
+      entityId: businessUserId,
+      metadata: { username: businessUser.user.username },
+    });
   });
 
   return {

@@ -271,7 +271,7 @@ export function ProductFormDialog({ product }: { product?: Product }) {
   // `pcsPerContainer` is a form-only convenience, not a real product field -
   // fold it into `units` as a derived "pcs" entry (factor = 1/count) before
   // sending, and drop it from the payload the backend doesn't know about.
-  const buildPayload = (values: ParsedValues) => {
+  const buildBasePayload = (values: ParsedValues) => {
     const { pcsPerContainer, ...rest } = values
     const units = [...(rest.units ?? [])]
     if (pcsPerContainer !== undefined && CONTAINER_UNITS.includes(rest.unit.trim().toLowerCase())) {
@@ -281,10 +281,16 @@ export function ProductFormDialog({ product }: { product?: Product }) {
   }
 
   const mutation = useMutation({
-    mutationFn: (values: ParsedValues) =>
-      isEdit
-        ? productService.updateProduct(activeBusinessId!, product.id, buildPayload(values))
-        : productService.createProduct(activeBusinessId!, buildPayload(values)),
+    mutationFn: (values: ParsedValues) => {
+      const base = buildBasePayload(values)
+      return isEdit
+        ? productService.updateProduct(activeBusinessId!, product.id, {
+            ...base,
+            costPrice: base.costPrice ?? null,
+            shortCode: base.shortCode || null,
+          })
+        : productService.createProduct(activeBusinessId!, base)
+    },
     onSuccess: () => {
       invalidate()
       toast.success(isEdit ? t("Product updated") : t("Product created"))

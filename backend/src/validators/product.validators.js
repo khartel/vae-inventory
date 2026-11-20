@@ -18,14 +18,33 @@ const productIdParamSchema = {
 };
 
 // Optional short code (e.g. barcode/SKU shorthand for fast POS lookup),
-// capped at 20 chars; blank strings are coerced to undefined so an empty
-// form field doesn't get persisted as "".
-const shortCodeField = z
+// capped at 20 chars. On create, blank strings coerce to undefined; on
+// update, blank strings or explicit null coerce to null so an existing
+// short code can be cleared.
+const createShortCodeField = z
   .string()
   .trim()
   .max(20, "Short code must be 20 characters or fewer")
   .optional()
   .transform((value) => (value ? value : undefined));
+
+const updateShortCodeField = z
+  .union([
+    z.null(),
+    z.string().trim().max(20, "Short code must be 20 characters or fewer"),
+  ])
+  .optional()
+  .transform((value) => {
+    if (value === undefined) return undefined;
+    return value ? value : null;
+  });
+
+const updateCostPriceField = z
+  .union([
+    z.null(),
+    z.coerce.number().nonnegative("Cost price cannot be negative"),
+  ])
+  .optional();
 
 // Optional alternate pack sizes (e.g. "dozen" = 12 base units). Price for
 // each is always derived as product.price * factor - no separate price
@@ -48,7 +67,7 @@ const createProductSchema = {
     price: z.coerce.number().nonnegative("Price cannot be negative").optional(),
     costPrice: z.coerce.number().nonnegative("Cost price cannot be negative").optional(),
     description: z.string().trim().optional(),
-    shortCode: shortCodeField,
+    shortCode: createShortCodeField,
     units: unitsField,
   }),
 };
@@ -60,9 +79,9 @@ const updateProductSchema = {
     name: z.string().trim().min(1).optional(),
     unit: z.string().trim().min(1).optional(),
     price: z.coerce.number().nonnegative("Price cannot be negative").optional(),
-    costPrice: z.coerce.number().nonnegative("Cost price cannot be negative").optional(),
+    costPrice: updateCostPriceField,
     description: z.string().trim().optional(),
-    shortCode: shortCodeField,
+    shortCode: updateShortCodeField,
     units: unitsField,
   }),
 };

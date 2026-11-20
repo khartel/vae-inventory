@@ -3,8 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Printer, Undo2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import * as transactionService from "@/services/transaction.service"
-import { useAuth } from "@/context/AuthContext"
-import { useActiveBusiness } from "@/hooks/useActiveBusiness"
+import { useActiveBusiness, useActiveBusinessRole } from "@/hooks/useActiveBusiness"
 import { canManage } from "@/lib/permissions"
 import { formatDate, formatDateTime, formatMoney } from "@/lib/format"
 import { ReturnDialog } from "@/components/transactions/ReturnDialog"
@@ -58,8 +57,8 @@ export function TransactionDetailSheet({
   onOpenChange: (open: boolean) => void
 }) {
   const { t } = useTranslation()
-  const { user } = useAuth()
   const activeBusiness = useActiveBusiness()
+  const activeRole = useActiveBusinessRole()
   const currency = activeBusiness?.currency ?? "USD"
   const [returnDialogOpen, setReturnDialogOpen] = useState(false)
 
@@ -97,6 +96,9 @@ export function TransactionDetailSheet({
           <DialogDescription>
             {transaction ? formatDateTime(transaction.createdAt) : t("Loading...")}
           </DialogDescription>
+          <p className="text-xs text-muted-foreground">
+            {t('If a web address or print time appears, turn off "Headers and footers" in your browser’s print settings.')}
+          </p>
         </DialogHeader>
 
         {transaction && (
@@ -305,7 +307,7 @@ export function TransactionDetailSheet({
 
         {transaction && (
           <DialogFooter className="print:hidden">
-            {canManage(user?.role) && hasReturnableItems && (
+            {canManage(activeRole) && hasReturnableItems && (
               <Button
                 variant="outline"
                 className="w-full sm:w-auto"

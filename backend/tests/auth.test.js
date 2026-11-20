@@ -1,4 +1,4 @@
-const { app, request } = require("./helpers");
+const { app, request, createSuperAdminWithBusiness, addAndLoginTeamMember } = require("./helpers");
 
 describe("Auth", () => {
   test("registers a new SuperAdmin and logs in", async () => {
@@ -76,5 +76,31 @@ describe("Auth", () => {
   test("requires authentication for /me", async () => {
     const res = await request(app).get("/api/auth/me");
     expect(res.status).toBe(401);
+  });
+
+  test("preserves mustChangePassword on /auth/me until the user changes their password", async () => {
+    const owner = await createSuperAdminWithBusiness();
+    const staff = await addAndLoginTeamMember(owner.cookie, owner.business.id, "EMPLOYEE");
+
+    expect(staff.user.mustChangePassword).toBe(true);
+
+    // Simulates a browser reload calling /auth/me before changing password
+    const meBefore = await request(app).get("/api/auth/me").set("Cookie", staff.cookie);
+    expect(meBefore.status).toBe(200);
+    expect(meBefore.body.data.mustChangePassword).toBe(true);
+
+    // After changing password, /auth/me clears mustChangePassword
+    const changeRes = await request(app)
+      .post("/api/auth/change-password")
+      .set("Cookie", staff.cookie)
+      .send({
+        currentPassword: staff.addResponse.body.data.defaultPassword,
+        newPassword: "brandNewPassword123",
+      });
+    expect(changeRes.status).toBe(200);
+
+    const meAfter = await request(app).get("/api/auth/me").set("Cookie", staff.cookie);
+    expect(meAfter.status).toBe(200);
+    expect(meAfter.body.data.mustChangePassword).toBe(false);
   });
 });

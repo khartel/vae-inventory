@@ -21,3 +21,16 @@ export function useActiveBusiness() {
   const { user, activeBusinessId } = useAuth()
   return user?.businesses.find((b) => b.id === activeBusinessId) ?? null
 }
+
+/**
+ * Returns the user's effective role for the active business (`roleInBusiness`
+ * on their membership row, falling back to their global account role for
+ * SUPERADMIN owners or before a business is picked). Always use this rather
+ * than `user?.role` when gating business-scoped UI — promoting/demoting a
+ * staff member updates `BusinessUser.role`, not `User.role`.
+ */
+export function useActiveBusinessRole() {
+  const { user } = useAuth()
+  const activeBusiness = useActiveBusiness()
+  return activeBusiness?.roleInBusiness ?? user?.role
+}

@@ -112,7 +112,11 @@ const createReturnSchema = {
           quantityReturned: z.coerce.number().positive("Quantity must be greater than 0"),
         })
       )
-      .min(1, "Select at least one item to return"),
+      .min(1, "Select at least one item to return")
+      .refine(
+        (items) => new Set(items.map((item) => item.transactionItemId)).size === items.length,
+        "Each item can only appear once in a return"
+      ),
     refundMethod: z.enum(["CASH", "CREDIT_BALANCE"], {
       message: "Refund method must be CASH or CREDIT_BALANCE",
     }),

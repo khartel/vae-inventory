@@ -1,6 +1,7 @@
 const prisma = require("../utils/prisma");
 const { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, format, eachDayOfInterval, eachWeekOfInterval } = require("date-fns");
 const { getThresholdSettings, resolveLowStockThreshold } = require("../utils/lowStockThreshold");
+const { parseCalendarDate } = require("../utils/parseDate");
 
 /**
  * Builds a Prisma-friendly date range filter (`{ gte, lte }`) spanning the
@@ -13,8 +14,8 @@ const { getThresholdSettings, resolveLowStockThreshold } = require("../utils/low
  * @returns {{gte: Date, lte: Date}}
  */
 const buildDateRange = (startDate, endDate) => {
-  const start = startDate ? new Date(startDate) : new Date();
-  const end = endDate ? new Date(endDate) : new Date();
+  const start = parseCalendarDate(startDate);
+  const end = parseCalendarDate(endDate);
 
   return {
     gte: startOfDay(start),
@@ -69,7 +70,7 @@ const computeCostProfit = (items) => {
  * @returns {Promise<object>} `{ date, summary, transactions, byEmployee, byProduct }`.
  */
 const getDailyReport = async (businessId, date) => {
-  const targetDate = date ? new Date(date) : new Date();
+  const targetDate = parseCalendarDate(date);
 
   const dateRange = {
     gte: startOfDay(targetDate),
@@ -214,7 +215,7 @@ const getDailyReport = async (businessId, date) => {
  * @returns {Promise<object>} `{ weekStart, weekEnd, summary, dailyBreakdown, byEmployee, byProduct }`.
  */
 const getWeeklyReport = async (businessId, date) => {
-  const targetDate = date ? new Date(date) : new Date();
+  const targetDate = parseCalendarDate(date);
   const weekStart = startOfWeek(targetDate, { weekStartsOn: 1 }); // Monday
   const weekEnd = endOfWeek(targetDate, { weekStartsOn: 1 });     // Sunday
 
@@ -730,7 +731,10 @@ const getProductReport = async (businessId, startDate, endDate) => {
   // Get current stock for all products in a single query instead of one per product
   const productIds = products.map((p) => p.product.id);
   const allStock = await prisma.warehouseStock.findMany({
-    where: { productId: { in: productIds } },
+    where: {
+      productId: { in: productIds },
+      warehouse: { businessId, deletedAt: null },
+    },
     include: {
       warehouse: {
         select: {
@@ -792,7 +796,8 @@ const getStockAlertReport = async (businessId) => {
   const [rawStock, thresholdSettings] = await Promise.all([
     prisma.warehouseStock.findMany({
       where: {
-        warehouse: { businessId },
+        warehouse: { businessId, deletedAt: null },
+        product: { deletedAt: null },
       },
       include: {
         product: {

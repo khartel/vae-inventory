@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next"
 import { useQuery } from "@tanstack/react-query"
 import { UserPlus } from "lucide-react"
 import * as customerService from "@/services/customer.service"
-import { useAuth } from "@/context/AuthContext"
+import { useActiveBusinessRole } from "@/hooks/useActiveBusiness"
 import { canManage } from "@/lib/permissions"
 import { Input } from "@/components/ui/input"
 import { CustomerFormDialog } from "@/components/customers/CustomerFormDialog"
@@ -42,7 +42,8 @@ export function CreditCustomerPicker({
   error?: string
 }) {
   const { t } = useTranslation()
-  const { user } = useAuth()
+  const activeRole = useActiveBusinessRole()
+  const canAddCustomer = canManage(activeRole)
   const [query, setQuery] = useState(value?.name ?? "")
   const [debounced, setDebounced] = useState(query)
   const [focused, setFocused] = useState(false)
@@ -104,7 +105,7 @@ export function CreditCustomerPicker({
               <span className="text-xs text-muted-foreground">{customer.phone}</span>
             </button>
           ))}
-          {noResults && canManage(user?.role) && (
+          {noResults && canAddCustomer && (
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
@@ -115,7 +116,7 @@ export function CreditCustomerPicker({
               {t("Add \"{{name}}\" as a new customer", { name: debounced.trim() })}
             </button>
           )}
-          {noResults && !canManage(user?.role) && (
+          {noResults && !canAddCustomer && (
             <p className="px-3 py-2 text-xs text-muted-foreground">
               {t("No customer found — ask a manager to add them first.")}
             </p>

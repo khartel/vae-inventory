@@ -96,13 +96,13 @@ const getMyBusinesses = async (ownerId) => {
       _count: {
         select: {
           businessUsers: true,
-          warehouses: true,
-          products: true,
+          warehouses: { where: { deletedAt: null } },
+          products: { where: { deletedAt: null } },
           transactions: true,
         },
       },
       warehouses: {
-        where: { isPrimary: true },
+        where: { isPrimary: true, deletedAt: null },
         select: {
           id: true,
           name: true,
@@ -131,6 +131,51 @@ const getMyBusinesses = async (ownerId) => {
  * @returns {Promise<object>} The business with nested detail.
  * @throws {AppError} 404 if not found or the user has no access to it.
  */
+const BUSINESS_DETAIL_INCLUDE = {
+  owner: {
+    select: {
+      id: true,
+      fullName: true,
+      username: true,
+      phone: true,
+      email: true,
+    },
+  },
+  warehouses: {
+    where: { deletedAt: null },
+    include: {
+      _count: {
+        select: {
+          stock: { where: { product: { deletedAt: null } } },
+        },
+      },
+    },
+    orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+  },
+  businessUsers: {
+    include: {
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+          username: true,
+          phone: true,
+          email: true,
+          role: true,
+        },
+      },
+    },
+  },
+  _count: {
+    select: {
+      businessUsers: true,
+      warehouses: { where: { deletedAt: null } },
+      products: { where: { deletedAt: null } },
+      transactions: true,
+    },
+  },
+};
+
 const getBusinessById = async (businessId, userId, role) => {
   let business;
 
@@ -140,50 +185,7 @@ const getBusinessById = async (businessId, userId, role) => {
         id: businessId,
         ownerId: userId,
       },
-      include: {
-        owner: {
-          select: {
-            id: true,
-            fullName: true,
-            username: true,
-            phone: true,
-            email: true,
-          },
-        },
-        warehouses: {
-          include: {
-            _count: {
-              select: { stock: true },
-            },
-          },
-          orderBy: [
-            { isPrimary: "desc" },
-            { createdAt: "asc" },
-          ],
-        },
-        businessUsers: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                fullName: true,
-                username: true,
-                phone: true,
-                email: true,
-                role: true,
-              },
-            },
-          },
-        },
-        _count: {
-          select: {
-            businessUsers: true,
-            warehouses: true,
-            products: true,
-            transactions: true,
-          },
-        },
-      },
+      include: BUSINESS_DETAIL_INCLUDE,
     });
   } else {
     // Admin or Employee — must be linked to business
@@ -191,50 +193,7 @@ const getBusinessById = async (businessId, userId, role) => {
       where: { businessId, userId },
       include: {
         business: {
-          include: {
-            owner: {
-              select: {
-                id: true,
-                fullName: true,
-                username: true,
-                phone: true,
-                email: true,
-              },
-            },
-            warehouses: {
-              include: {
-                _count: {
-                  select: { stock: true },
-                },
-              },
-              orderBy: [
-                { isPrimary: "desc" },
-                { createdAt: "asc" },
-              ],
-            },
-            businessUsers: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    fullName: true,
-                    username: true,
-                    phone: true,
-                    email: true,
-                    role: true,
-                  },
-                },
-              },
-            },
-            _count: {
-              select: {
-                businessUsers: true,
-                warehouses: true,
-                products: true,
-                transactions: true,
-              },
-            },
-          },
+          include: BUSINESS_DETAIL_INCLUDE,
         },
       },
     });
@@ -284,7 +243,7 @@ const updateBusiness = async (
   });
 
   if (!existing) {
-    throw new Error("Business not found or access denied");
+    throw new AppError("Business not found or access denied", 404);
   }
 
   const updated = await prisma.business.update({

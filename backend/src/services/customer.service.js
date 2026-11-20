@@ -1,33 +1,27 @@
 const prisma = require("../utils/prisma");
 const AppError = require("../utils/AppError");
 const { recordAudit } = require("../utils/auditLog");
-
-/**
- * Computes how much of a transaction's total is still unpaid, by summing
- * any recorded CreditPayments and subtracting from the total. Rounded to
- * 2 decimal places to avoid floating-point cent drift. Meaningful mainly
- * for CREDIT sales, but safe to call on any transaction (payments will
- * simply be empty).
- */
-const balanceDueOf = (transaction) => {
-  const amountPaid = (transaction.payments || []).reduce((sum, p) => sum + p.amount, 0);
-  return Math.round((transaction.totalAmount - amountPaid) * 100) / 100;
-};
+const { computeCreditStats } = require("../utils/creditBalance");
 
 /**
  * Derives a customer's summary stats from their loaded transaction history:
  * total number of transactions, lifetime amount spent, and outstanding
  * credit — the sum of balances still owed on CREDIT sales that haven't
- * been marked fully paid (`paidAt` is null). Strips the raw `transactions`
- * array out of the returned object in favor of these aggregates, since
- * list views only need the summary, not every line item.
+ * been marked fully paid (`paidAt` is null), accounting for both recorded
+ * CreditPayments and CREDIT_BALANCE returns via `computeCreditStats`.
+ * Strips the raw `transactions` array out of the returned object in favor
+ * of these aggregates, since list views only need the summary, not every
+ * line item.
  */
 const withStats = (customer) => {
   const { transactions, ...rest } = customer;
   const totalSpent = transactions.reduce((sum, t) => sum + t.totalAmount, 0);
-  const outstandingCredit = transactions
-    .filter((t) => t.paymentMethod === "CREDIT" && !t.paidAt)
-    .reduce((sum, t) => sum + balanceDueOf(t), 0);
+  const outstandingCredit =
+    Math.round(
+      transactions
+        .filter((t) => t.paymentMethod === "CREDIT" && !t.paidAt)
+        .reduce((sum, t) => sum + Math.max(0, computeCreditStats(t).balanceDue), 0) * 100
+    ) / 100;
 
   return {
     ...rest,
@@ -78,6 +72,7 @@ const getCustomers = async (businessId, { search, limit } = {}) => {
           paymentMethod: true,
           paidAt: true,
           payments: { select: { amount: true } },
+          returns: { select: { refundMethod: true, refundAmount: true } },
         },
       },
     },
@@ -114,6 +109,7 @@ const getCustomerById = async (customerId, businessId) => {
           performedBy: { select: { id: true, fullName: true, username: true } },
           warehouse: { select: { id: true, name: true, isPrimary: true } },
           payments: { select: { amount: true } },
+          returns: { select: { refundMethod: true, refundAmount: true } },
         },
       },
     },
@@ -123,11 +119,10 @@ const getCustomerById = async (customerId, businessId) => {
     throw new AppError("Customer not found", 404);
   }
 
-  const transactionsWithBalance = customer.transactions.map((t) => ({
-    ...t,
-    amountPaid: Math.round((t.totalAmount - balanceDueOf(t)) * 100) / 100,
-    balanceDue: balanceDueOf(t),
-  }));
+  const transactionsWithBalance = customer.transactions.map((t) => {
+    const { amountPaid, balanceDue } = computeCreditStats(t);
+    return { ...t, amountPaid, balanceDue };
+  });
 
   return { ...withStats(customer), transactions: transactionsWithBalance };
 };

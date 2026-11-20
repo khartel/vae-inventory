@@ -32,7 +32,9 @@ const add = asyncHandler(async (req, res) => {
   });
 
   return sendSuccess(res, {
-    message: `${role} added successfully. Default password is: ${member.defaultPassword || username + "123"}`,
+    message: member.defaultPassword
+      ? `${role} added successfully. Default password is: ${member.defaultPassword}`
+      : `${role} added successfully. They can log in with their existing password.`,
     data: member,
     statusCode: 201,
   });

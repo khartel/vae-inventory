@@ -5,7 +5,7 @@ import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
 import * as productService from "@/services/product.service"
 import { useAuth } from "@/context/AuthContext"
-import { useActiveBusiness } from "@/hooks/useActiveBusiness"
+import { useActiveBusiness, useActiveBusinessRole } from "@/hooks/useActiveBusiness"
 import { canManage } from "@/lib/permissions"
 import { ApiError } from "@/lib/api-client"
 import { formatMoney } from "@/lib/format"
@@ -42,10 +42,11 @@ import {
  */
 export default function Products() {
   const { t } = useTranslation()
-  const { user, activeBusinessId } = useAuth()
+  const { activeBusinessId } = useAuth()
   const activeBusiness = useActiveBusiness()
+  const activeRole = useActiveBusinessRole()
   const queryClient = useQueryClient()
-  const canEdit = canManage(user?.role)
+  const canEdit = canManage(activeRole)
   const currency = activeBusiness?.currency ?? "USD"
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null)
   const [search, setSearch] = useState("")

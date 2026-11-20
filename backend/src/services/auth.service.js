@@ -4,7 +4,7 @@ const QRCode = require("qrcode");
 const prisma = require("../utils/prisma");
 const { generateToken, verifyToken, generateShortLivedToken } = require("../utils/jwt.utils");
 const { getCurrencyForCountry } = require("../utils/currencies");
-const { sendEmail, passwordResetEmailHtml, welcomeEmailHtml } = require("../utils/email.utils");
+const { sendEmail, passwordResetEmailHtml, welcomeEmailHtml, getPrimaryClientUrl } = require("../utils/email.utils");
 const logger = require("../utils/logger");
 const AppError = require("../utils/AppError");
 const { recordAudit } = require("../utils/auditLog");
@@ -290,7 +290,7 @@ const requestPasswordReset = async (email) => {
   if (!user) return;
 
   const resetToken = generateShortLivedToken({ id: user.id, purpose: "password-reset" }, "30m");
-  const resetUrl = `${process.env.CLIENT_URL}/reset-password?token=${resetToken}`;
+  const resetUrl = `${getPrimaryClientUrl()}/reset-password?token=${resetToken}`;
 
   sendEmail({
     to: { email: user.email, name: user.fullName },
@@ -360,6 +360,7 @@ const getMe = async (userId) => {
       phone: true,
       email: true,
       role: true,
+      mustChangePassword: true,
       twoFactorEnabled: true,
       language: true,
       createdAt: true,

@@ -100,7 +100,11 @@ const resetSuperAdminPassword = async (userId) => {
 
   await prisma.user.update({
     where: { id: userId },
-    data: { passwordHash, mustChangePassword: true },
+    data: {
+      passwordHash,
+      mustChangePassword: true,
+      tokenVersion: { increment: 1 },
+    },
   });
 
   return { username: user.username, newPassword };

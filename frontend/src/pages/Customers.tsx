@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next"
 import * as customerService from "@/services/customer.service"
 import * as transactionService from "@/services/transaction.service"
 import { useAuth } from "@/context/AuthContext"
-import { useActiveBusiness } from "@/hooks/useActiveBusiness"
+import { useActiveBusiness, useActiveBusinessRole } from "@/hooks/useActiveBusiness"
 import { canManage } from "@/lib/permissions"
 import { ApiError } from "@/lib/api-client"
 import { formatDateTime, formatMoney } from "@/lib/format"
@@ -44,9 +44,9 @@ import {
  */
 function CustomersTab({ businessId, currency }: { businessId: string; currency: string }) {
   const { t } = useTranslation()
-  const { user } = useAuth()
+  const activeRole = useActiveBusinessRole()
   const queryClient = useQueryClient()
-  const canEdit = canManage(user?.role)
+  const canEdit = canManage(activeRole)
   const [search, setSearch] = useState("")
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
@@ -293,9 +293,10 @@ function CreditTab({ businessId, currency }: { businessId: string; currency: str
  */
 export default function Customers() {
   const { t } = useTranslation()
-  const { user, activeBusinessId } = useAuth()
+  const { activeBusinessId } = useAuth()
   const activeBusiness = useActiveBusiness()
-  const canEdit = canManage(user?.role)
+  const activeRole = useActiveBusinessRole()
+  const canEdit = canManage(activeRole)
   const currency = activeBusiness?.currency ?? "USD"
 
   if (!activeBusinessId) {

@@ -46,10 +46,38 @@ function describe(entry: AuditLogEntry): { label: string; detail: string } {
       return { label: "Removed team member", detail: String(m.username ?? "") }
     case "team.role_changed":
       return { label: "Changed role", detail: `${m.username ?? ""}: ${m.fromRole ?? ""} → ${m.toRole ?? ""}` }
+    case "team.password_reset":
+      return { label: "Reset team member password", detail: String(m.username ?? "") }
     case "business.created":
       return { label: "Created business", detail: String(m.name ?? "") }
     case "business.deleted":
       return { label: "Deleted business", detail: String(m.name ?? "") }
+    case "transaction.returned":
+      return {
+        label: "Processed return",
+        detail: m.refundMethod ? `${String(m.refundMethod)} (${String(m.itemCount ?? 0)})` : "",
+      }
+    case "stock.adjusted":
+      return {
+        label: "Adjusted stock",
+        detail: `${m.productName ?? ""}${m.warehouseName ? ` · ${m.warehouseName}` : ""}: ${m.previousQuantity ?? ""} → ${m.newQuantity ?? ""}`,
+      }
+    case "SUPPLIER_CREATED":
+      return { label: "Added supplier", detail: String(m.name ?? "") }
+    case "SUPPLIER_UPDATED":
+      return { label: "Updated supplier", detail: String(m.name ?? "") }
+    case "SUPPLIER_ARCHIVED":
+      return { label: "Archived supplier", detail: String(m.name ?? entry.entityId?.slice(0, 8) ?? "") }
+    case "SUPPLIER_RESTORED":
+      return { label: "Restored supplier", detail: String(m.name ?? entry.entityId?.slice(0, 8) ?? "") }
+    case "PURCHASE_DRAFT_SAVED":
+      return { label: "Saved purchase draft", detail: entry.entityId ? `PO-${entry.entityId.slice(0, 8).toUpperCase()}` : "" }
+    case "PURCHASE_ORDERED":
+      return { label: "Marked purchase ordered", detail: entry.entityId ? `PO-${entry.entityId.slice(0, 8).toUpperCase()}` : "" }
+    case "PURCHASE_CANCELLED":
+      return { label: "Cancelled purchase order", detail: entry.entityId ? `PO-${entry.entityId.slice(0, 8).toUpperCase()}` : "" }
+    case "PURCHASE_RECEIVED":
+      return { label: "Received purchase stock", detail: entry.entityId ? `PO-${entry.entityId.slice(0, 8).toUpperCase()}` : "" }
     default:
       return { label: entry.action, detail: "" }
   }

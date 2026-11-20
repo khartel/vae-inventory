@@ -6,7 +6,7 @@ import * as stockService from "@/services/stock.service"
 import type { StockMovement } from "@/services/stock.service"
 import * as warehouseService from "@/services/warehouse.service"
 import { useAuth } from "@/context/AuthContext"
-import { useActiveBusiness } from "@/hooks/useActiveBusiness"
+import { useActiveBusiness, useActiveBusinessRole } from "@/hooks/useActiveBusiness"
 import { canManage } from "@/lib/permissions"
 import { formatDate } from "@/lib/format"
 import { downloadCsv } from "@/lib/csv"
@@ -118,9 +118,10 @@ interface DayGroup {
  */
 export default function StockMovements() {
   const { t } = useTranslation()
-  const { user, activeBusinessId } = useAuth()
+  const { activeBusinessId } = useAuth()
   const activeBusiness = useActiveBusiness()
-  const canEdit = canManage(user?.role)
+  const activeRole = useActiveBusinessRole()
+  const canEdit = canManage(activeRole)
   const [selectedDay, setSelectedDay] = useState<DayGroup | null>(null)
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")

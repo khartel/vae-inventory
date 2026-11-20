@@ -9,10 +9,34 @@ const { BrevoClient } = require("@getbrevo/brevo");
 const client = new BrevoClient({ apiKey: process.env.BREVO_API_KEY });
 
 /**
+ * Returns the first configured origin from `CLIENT_URL` (which may be a
+ * comma-separated list of allowed CORS origins — see `app.js`), with any
+ * trailing slash stripped so emailed links are always well-formed.
+ */
+const getPrimaryClientUrl = () => {
+  const first = (process.env.CLIENT_URL || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .find(Boolean);
+  return (first || "http://localhost:5173").replace(/\/+$/, "");
+};
+
+/** Escapes HTML special characters before interpolating user text into email markup. */
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+/**
  * @param {{to: {email: string, name?: string}, subject: string, html: string}} params
  * @throws if the send fails - callers decide whether that's fatal.
  */
 const sendEmail = async ({ to, subject, html }) => {
+  if (process.env.NODE_ENV === "test") return;
+
   await client.transactionalEmails.sendTransacEmail({
     sender: { email: process.env.EMAIL_FROM_ADDRESS, name: process.env.EMAIL_FROM_NAME },
     to: [to],
@@ -67,7 +91,10 @@ const passwordResetEmailHtml = (resetUrl) => `
  * SuperAdmin registers. Same inline-styles-only approach as the
  * password-reset email, for the same reason (email client CSS support).
  */
-const welcomeEmailHtml = (fullName) => `
+const welcomeEmailHtml = (fullName) => {
+  const safeName = escapeHtml(fullName);
+  const loginUrl = `${getPrimaryClientUrl()}/login`;
+  return `
 <html>
   <body style="margin:0;padding:0;background-color:#f4f4f7;font-family:Helvetica,Arial,sans-serif;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;">
@@ -79,13 +106,13 @@ const welcomeEmailHtml = (fullName) => `
             </tr>
             <tr>
               <td style="font-size:15px;color:#374151;line-height:1.5;padding-bottom:24px;">
-                Welcome, ${fullName}! Your account is ready. Sign in to set up your business —
+                Welcome, ${safeName}! Your account is ready. Sign in to set up your business —
                 add warehouses, products, and team members — and start tracking sales.
               </td>
             </tr>
             <tr>
               <td align="center" style="padding-bottom:8px;">
-                <a href="${process.env.CLIENT_URL}/login" style="background:#059669;color:#ffffff;text-decoration:none;padding:12px 28px;border-radius:8px;font-size:15px;font-weight:600;display:inline-block;">
+                <a href="${loginUrl}" style="background:#059669;color:#ffffff;text-decoration:none;padding:12px 28px;border-radius:8px;font-size:15px;font-weight:600;display:inline-block;">
                   Sign in
                 </a>
               </td>
@@ -97,5 +124,6 @@ const welcomeEmailHtml = (fullName) => `
   </body>
 </html>
 `;
+};
 
-module.exports = { sendEmail, passwordResetEmailHtml, welcomeEmailHtml };
+module.exports = { sendEmail, passwordResetEmailHtml, welcomeEmailHtml, getPrimaryClientUrl, escapeHtml };

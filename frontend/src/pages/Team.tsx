@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next"
 import * as teamService from "@/services/team.service"
 import type { TeamMember } from "@/services/team.service"
 import { useAuth } from "@/context/AuthContext"
+import { useActiveBusinessRole } from "@/hooks/useActiveBusiness"
 import { canManage } from "@/lib/permissions"
 import { ApiError } from "@/lib/api-client"
 import { PageHeader } from "@/components/PageHeader"
@@ -64,8 +65,9 @@ function initials(fullName: string) {
 export default function Team() {
   const { t } = useTranslation()
   const { user, activeBusinessId } = useAuth()
+  const activeRole = useActiveBusinessRole()
   const queryClient = useQueryClient()
-  const canEdit = canManage(user?.role)
+  const canEdit = canManage(activeRole)
   const [search, setSearch] = useState("")
   const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null)
 

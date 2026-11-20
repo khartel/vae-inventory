@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
 import * as warehouseService from "@/services/warehouse.service"
 import { useAuth } from "@/context/AuthContext"
+import { useActiveBusinessRole } from "@/hooks/useActiveBusiness"
 import { canManage } from "@/lib/permissions"
 import { ApiError } from "@/lib/api-client"
 import { PageHeader } from "@/components/PageHeader"
@@ -39,9 +40,10 @@ import {
  */
 export default function Warehouses() {
   const { t } = useTranslation()
-  const { user, activeBusinessId } = useAuth()
+  const { activeBusinessId } = useAuth()
+  const activeRole = useActiveBusinessRole()
   const queryClient = useQueryClient()
-  const canEdit = canManage(user?.role)
+  const canEdit = canManage(activeRole)
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string | null>(null)
 
   const warehousesQuery = useQuery({

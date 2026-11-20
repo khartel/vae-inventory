@@ -15,15 +15,19 @@ const {
 const { sendSuccess } = require("../utils/response.utils");
 const asyncHandler = require("../utils/asyncHandler");
 
+const AUTH_COOKIE_OPTIONS = () => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "strict",
+});
+
 /**
  * Sets the httpOnly session cookie - shared by the direct login path and
  * the 2FA-verify path so both produce an identical session.
  */
 const setAuthCookie = (res, token, rememberMe) => {
   res.cookie("token", token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
+    ...AUTH_COOKIE_OPTIONS(),
     maxAge: rememberMe
       ? 30 * 24 * 60 * 60 * 1000 // 30 days
       : 24 * 60 * 60 * 1000, // 24 hours
@@ -98,7 +102,7 @@ const verifyLogin2FA = asyncHandler(async (req, res) => {
  */
 const logout = asyncHandler(async (req, res) => {
   await invalidateSessions(req.user.id);
-  res.clearCookie("token");
+  res.clearCookie("token", AUTH_COOKIE_OPTIONS());
 
   return sendSuccess(res, {
     message: "Logged out successfully",

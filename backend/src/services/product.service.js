@@ -3,6 +3,7 @@ const AppError = require("../utils/AppError");
 const { recordAudit } = require("../utils/auditLog");
 const { startOfDay, endOfDay } = require("date-fns");
 const { getThresholdSettings, resolveLowStockThreshold } = require("../utils/lowStockThreshold");
+const { parseCalendarDate } = require("../utils/parseDate");
 
 /**
  * Ensure a short code isn't already used by another product in this
@@ -104,7 +105,7 @@ const createProduct = async ({ businessId, name, unit, price, costPrice, descrip
       name,
       unit,
       price: price ? parseFloat(price) : 0,
-      costPrice: costPrice !== undefined ? parseFloat(costPrice) : undefined,
+      costPrice: costPrice != null ? parseFloat(costPrice) : undefined,
       description,
       shortCode,
       units: units && units.length > 0 ? { create: units } : undefined,
@@ -152,6 +153,7 @@ const getProducts = async (businessId, { includeCostPrice = false } = {}) => {
       include: {
         units: true,
         stock: {
+          where: { warehouse: { deletedAt: null } },
           include: {
             warehouse: {
               select: {
@@ -208,6 +210,7 @@ const getProductById = async (productId, businessId, { includeCostPrice = false 
       include: {
         units: true,
         stock: {
+          where: { warehouse: { deletedAt: null } },
           include: {
             warehouse: {
               select: {
@@ -328,7 +331,9 @@ const updateProduct = async (productId, businessId, { name, unit, price, costPri
         ...(name && { name }),
         ...(unit && { unit }),
         ...(price !== undefined && { price: parseFloat(price) }),
-        ...(costPrice !== undefined && { costPrice: parseFloat(costPrice) }),
+        ...(costPrice !== undefined && {
+          costPrice: costPrice === null ? null : parseFloat(costPrice),
+        }),
         ...(description !== undefined && { description }),
         ...(shortCode !== undefined && { shortCode }),
       },
@@ -677,76 +682,82 @@ const moveStock = async ({
     throw new AppError("Quantity must be greater than 0");
   }
 
-  // Check source stock
-  const sourceStock = await prisma.warehouseStock.findUnique({
-    where: {
-      warehouseId_productId: {
+  // Verify both warehouses and the product belong to this business and are active
+  // (not soft-deleted) — belongsToBusiness only checks :businessId in the URL.
+  const [fromWarehouse, toWarehouse, product] = await Promise.all([
+    prisma.warehouse.findFirst({
+      where: { id: fromWarehouseId, businessId, deletedAt: null },
+    }),
+    prisma.warehouse.findFirst({
+      where: { id: toWarehouseId, businessId, deletedAt: null },
+    }),
+    prisma.product.findFirst({
+      where: { id: productId, businessId, deletedAt: null },
+    }),
+  ]);
+
+  if (!fromWarehouse) {
+    throw new AppError("Source warehouse not found", 404);
+  }
+
+  if (!toWarehouse) {
+    throw new AppError("Destination warehouse not found", 404);
+  }
+
+  if (!product) {
+    throw new AppError("Product not found", 404);
+  }
+
+  // Perform the stock movement atomically in a transaction so concurrent
+  // moves/sales can never drive source stock negative.
+  const result = await prisma.$transaction(async (tx) => {
+    const deducted = await tx.warehouseStock.updateMany({
+      where: {
         warehouseId: fromWarehouseId,
         productId,
-      },
-    },
-    include: {
-      product: true,
-      warehouse: true,
-    },
-  });
-
-  if (!sourceStock) {
-    throw new AppError("Product not found in source warehouse", 404);
-  }
-
-  if (sourceStock.quantity < quantity) {
-    throw new AppError(
-      `Insufficient stock. Available: ${sourceStock.quantity} ${sourceStock.product.unit}`
-    );
-  }
-
-  // Perform the stock movement in a transaction
-  const result = await prisma.$transaction(async (tx) => {
-    // Deduct from source warehouse
-    await tx.warehouseStock.update({
-      where: {
-        warehouseId_productId: {
-          warehouseId: fromWarehouseId,
-          productId,
-        },
+        quantity: { gte: quantity },
       },
       data: {
-        quantity: sourceStock.quantity - quantity,
+        quantity: { decrement: quantity },
       },
     });
 
-    // Add to destination warehouse
-    const destStock = await tx.warehouseStock.findUnique({
-      where: {
-        warehouseId_productId: {
-          warehouseId: toWarehouseId,
-          productId,
-        },
-      },
-    });
-
-    if (destStock) {
-      await tx.warehouseStock.update({
+    if (deducted.count === 0) {
+      const currentSource = await tx.warehouseStock.findUnique({
         where: {
           warehouseId_productId: {
-            warehouseId: toWarehouseId,
+            warehouseId: fromWarehouseId,
             productId,
           },
         },
-        data: {
-          quantity: destStock.quantity + quantity,
-        },
       });
-    } else {
-      await tx.warehouseStock.create({
-        data: {
+
+      if (!currentSource) {
+        throw new AppError("Product not found in source warehouse", 404);
+      }
+
+      throw new AppError(
+        `Insufficient stock. Available: ${currentSource.quantity} ${product.unit}`
+      );
+    }
+
+    // Add to destination warehouse atomically
+    await tx.warehouseStock.upsert({
+      where: {
+        warehouseId_productId: {
           warehouseId: toWarehouseId,
           productId,
-          quantity,
         },
-      });
-    }
+      },
+      create: {
+        warehouseId: toWarehouseId,
+        productId,
+        quantity,
+      },
+      update: {
+        quantity: { increment: quantity },
+      },
+    });
 
     // Record the movement
     const movement = await tx.stockMovement.create({
@@ -909,8 +920,8 @@ const getStockMovements = async (businessId, filters = {}) => {
   const where = { businessId };
   if (startDate || endDate) {
     where.createdAt = {};
-    if (startDate) where.createdAt.gte = startOfDay(new Date(startDate));
-    if (endDate) where.createdAt.lte = endOfDay(new Date(endDate));
+    if (startDate) where.createdAt.gte = startOfDay(parseCalendarDate(startDate));
+    if (endDate) where.createdAt.lte = endOfDay(parseCalendarDate(endDate));
   }
   if (fromWarehouseId) where.fromWarehouseId = fromWarehouseId;
   if (toWarehouseId) where.toWarehouseId = toWarehouseId;

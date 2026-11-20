@@ -60,8 +60,12 @@ export interface CreateProductInput {
   units?: Array<{ label: string; factor: number }>
 }
 
-// Partial product fields for edits.
-export type UpdateProductInput = Partial<CreateProductInput>
+// Partial product fields for edits. Passing `null` for `costPrice` or
+// `shortCode` explicitly clears the stored value.
+export interface UpdateProductInput extends Omit<Partial<CreateProductInput>, "costPrice" | "shortCode"> {
+  costPrice?: number | null
+  shortCode?: string | null
+}
 
 /** Lists every product in a business's catalog, with stock info included. */
 export const getProducts = (businessId: string) =>

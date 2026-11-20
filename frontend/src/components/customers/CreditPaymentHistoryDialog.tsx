@@ -4,7 +4,7 @@ import { Loader2, Undo2 } from "lucide-react"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
 import * as transactionService from "@/services/transaction.service"
-import { useAuth } from "@/context/AuthContext"
+import { useActiveBusinessRole } from "@/hooks/useActiveBusiness"
 import { canManage } from "@/lib/permissions"
 import { ApiError } from "@/lib/api-client"
 import { formatDateTime, formatMoney } from "@/lib/format"
@@ -44,8 +44,8 @@ export function CreditPaymentHistoryDialog({
   trigger: ReactNode
 }) {
   const { t } = useTranslation()
-  const { user } = useAuth()
-  const canUndo = canManage(user?.role)
+  const activeRole = useActiveBusinessRole()
+  const canUndo = canManage(activeRole)
   const [open, setOpen] = useState(false)
   const queryClient = useQueryClient()
 
