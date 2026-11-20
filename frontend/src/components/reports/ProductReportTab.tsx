@@ -1,4 +1,5 @@
-﻿import { useState } from "react"
+﻿import { ReportToolbar, ReportDateField, ReportPanel } from "./ReportLayout"
+import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import * as reportService from "@/services/report.service"
 import type { ProductReportItem } from "@/services/report.service"
@@ -10,7 +11,6 @@ import { downloadPdfReport } from "@/lib/pdf"
 import { EmptyState } from "@/components/EmptyState"
 import { ErrorState } from "@/components/ErrorState"
 import { DownloadMenu } from "@/components/reports/DownloadMenu"
-import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Package } from "lucide-react"
 import { useTranslation } from "react-i18next"
@@ -31,7 +31,7 @@ function firstOfMonthIso() {
 function ProductList({ items, currency, metric }: { items: ProductReportItem[]; currency: string; metric: "revenue" | "quantity" }) {
   const { t } = useTranslation()
   return (
-    <ul className="space-y-2 text-sm">
+    <ul className="report-products-list">
       {items.map((row) => (
         <li key={row.product.id} className="flex items-center justify-between">
           <div>
@@ -46,7 +46,7 @@ function ProductList({ items, currency, metric }: { items: ProductReportItem[]; 
             </span>
             {metric === "revenue" && (
               <span className="block text-xs text-muted-foreground">
-                {t("Profit")}: {formatMoney(row.totalProfit, currency)}
+                {t("Profit")}: {formatMoney(row.totalProfit, currency)}{row.hasIncompleteCostData && <span className="block">{t("Incomplete cost data")}</span>}
               </span>
             )}
           </span>
@@ -69,10 +69,12 @@ export function ProductReportTab() {
   const [startDate, setStartDate] = useState(firstOfMonthIso)
   const [endDate, setEndDate] = useState(todayIso)
 
+  const invalidRange = !startDate || !endDate || startDate > endDate
+
   const query = useQuery({
     queryKey: ["report-products", activeBusinessId, startDate, endDate],
     queryFn: () => reportService.getProductReport(activeBusinessId!, startDate, endDate),
-    enabled: !!activeBusinessId,
+    enabled: !!activeBusinessId && !invalidRange,
   })
 
   const downloadAsCsv = () => {
@@ -119,22 +121,12 @@ export function ProductReportTab() {
     })
   }
 
-  const dateControls = (
-    <div className="flex flex-wrap items-center gap-2">
-      <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-auto" />
-      <span className="text-xs text-muted-foreground">{t("to")}</span>
-      <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-auto" />
-      <DownloadMenu
-        className="ml-auto"
-        disabled={!query.data}
-        groups={[{ items: [{ label: "CSV", onClick: downloadAsCsv }, { label: "PDF", onClick: downloadAsPdf }] }]}
-      />
-    </div>
-  )
+  const dateControls = <ReportToolbar title="Product performance" actions={<DownloadMenu disabled={!query.data || invalidRange} groups={[{ items: [{ label: "CSV", onClick: downloadAsCsv }, { label: "PDF", onClick: downloadAsPdf }] }]} />}><ReportDateField label="From" value={startDate} onChange={setStartDate} /><ReportDateField label="To" value={endDate} onChange={setEndDate} /></ReportToolbar>
+  if (invalidRange) return <div className="report-view">{dateControls}<p className="report-date-error" role="status">{t("Select a valid date range.")}</p></div>
 
   if (query.isLoading) {
     return (
-      <div className="space-y-4">
+      <div className="report-view">
         {dateControls}
         <Skeleton className="h-64 rounded-xl" />
       </div>
@@ -142,7 +134,7 @@ export function ProductReportTab() {
   }
   if (query.isError) {
     return (
-      <div className="space-y-4">
+      <div className="report-view">
         {dateControls}
         <ErrorState onRetry={() => query.refetch()} />
       </div>
@@ -153,7 +145,7 @@ export function ProductReportTab() {
 
   if (report.totalProducts === 0 || report.bestSelling.length === 0) {
     return (
-      <div className="space-y-4">
+      <div className="report-view">
         {dateControls}
         <EmptyState icon={<Package className="size-6" />} title="No product sales yet" description="Product performance will show up here once you record sales." />
       </div>
@@ -161,17 +153,11 @@ export function ProductReportTab() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="report-view">
       {dateControls}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div className="rounded-xl border border-border p-4">
-          <h3 className="mb-3 text-sm font-semibold">{t("Best selling (by revenue)")}</h3>
-          <ProductList items={report.bestSelling} currency={currency} metric="revenue" />
-        </div>
-        <div className="rounded-xl border border-border p-4">
-          <h3 className="mb-3 text-sm font-semibold">{t("Most quantity sold")}</h3>
-          <ProductList items={report.mostQuantitySold} currency={currency} metric="quantity" />
-        </div>
+      <div className="report-columns">
+        <ReportPanel title="Best selling (by revenue)" description="Gross sales before returns" icon={Package}><ProductList items={report.bestSelling} currency={currency} metric="revenue" /></ReportPanel>
+        <ReportPanel title="Most quantity sold" description="Quantities shown in each product’s own unit" icon={Package}><ProductList items={report.mostQuantitySold} currency={currency} metric="quantity" /></ReportPanel>
       </div>
     </div>
   )

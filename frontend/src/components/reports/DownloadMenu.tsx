@@ -1,6 +1,7 @@
 import { Fragment } from "react"
 import { Download } from "lucide-react"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -61,7 +62,12 @@ export function DownloadMenu({
             {i > 0 && <DropdownMenuSeparator />}
             {group.label && <DropdownMenuLabel>{t(group.label)}</DropdownMenuLabel>}
             {group.items.map((item) => (
-              <DropdownMenuItem key={item.label} onClick={item.onClick}>
+              <DropdownMenuItem key={item.label} onClick={() => {
+                try { item.onClick() } catch (error) {
+                  console.error("Report export failed", error)
+                  toast.error(t("Could not download report. Please try again."))
+                }
+              }}>
                 {t(item.label)}
               </DropdownMenuItem>
             ))}

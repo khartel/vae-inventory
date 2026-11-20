@@ -7,18 +7,18 @@ import { downloadCsv } from "@/lib/csv"
 import { downloadPdfReport } from "@/lib/pdf"
 import { EmptyState } from "@/components/EmptyState"
 import { ErrorState } from "@/components/ErrorState"
-import { SummaryStat } from "@/components/reports/SummaryStat"
+import { ReportToolbar, ReportPanel, ReportMetric } from "./ReportLayout"
 import { DownloadMenu } from "@/components/reports/DownloadMenu"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { AlertTriangle } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Package, ShieldAlert } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
 // Renders a list of stock alert rows (product + warehouse + quantity/threshold badge),
 // styled destructive (red) for out-of-stock or warning (amber) for low-stock.
 function AlertList({ items, tone }: { items: StockAlertItem[]; tone: "destructive" | "warning" }) {
   return (
-    <ul className="space-y-2 text-sm">
+    <ul className="report-alert-list">
       {items.map((item) => (
         <li key={item.id} className="flex items-center justify-between">
           <div>
@@ -58,12 +58,6 @@ export function StockAlertsTab() {
   const report = query.data
   if (!report) return null
 
-  if (report.summary.outOfStockCount === 0 && report.summary.lowStockCount === 0) {
-    return (
-      <EmptyState icon={<AlertTriangle className="size-6" />} title="All stock is healthy" description="No products are low or out of stock right now." />
-    )
-  }
-
   const alertRows = [
     ...report.outOfStock.map((item) => [
       item.product.name,
@@ -102,28 +96,24 @@ export function StockAlertsTab() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <DownloadMenu groups={[{ items: [{ label: "CSV", onClick: downloadAsCsv }, { label: "PDF", onClick: downloadAsPdf }] }]} />
+    <div className="report-view">
+      <ReportToolbar title="Stock health" period={t("Current stock across warehouses")} actions={<DownloadMenu groups={[{ items: [{ label: "CSV", onClick: downloadAsCsv }, { label: "PDF", onClick: downloadAsPdf }] }]} />}><p className="report-stock-context"><ShieldAlert size={16} />{t("{{count}} warehouse stock entries", { count: report.summary.totalItems })}</p></ReportToolbar>
+      <div className="report-metrics report-stock-metrics">
+        <ReportMetric label="Out of stock" value={report.summary.outOfStockCount} note="Stock entries with zero quantity" icon={AlertTriangle} tone="danger" />
+        <ReportMetric label="Low stock" value={report.summary.lowStockCount} note="At or below the alert threshold" icon={Package} tone="warning" />
+        <ReportMetric label="Healthy" value={report.summary.healthyCount} note="Above the alert threshold" icon={CheckCircle2} tone="primary" />
       </div>
-      <div className="grid grid-cols-3 gap-4">
-        <SummaryStat label="Out of stock" value={report.summary.outOfStockCount} />
-        <SummaryStat label="Low stock" value={report.summary.lowStockCount} />
-        <SummaryStat label="Healthy" value={report.summary.healthyCount} />
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      {report.summary.totalItems === 0 ? <EmptyState icon={<Package className="size-6" />} title="No stock entries yet" description="Stock health appears after products have stock recorded in a warehouse." /> : report.summary.outOfStockCount === 0 && report.summary.lowStockCount === 0 ? <EmptyState icon={<CheckCircle2 className="size-6" />} title="All stock is healthy" description="No products are low or out of stock right now." /> : null}
+      <div className="report-columns">
         {report.outOfStock.length > 0 && (
-          <div className="rounded-xl border border-border p-4">
-            <h3 className="mb-3 text-sm font-semibold">{t("Out of stock")}</h3>
+          <ReportPanel title="Out of stock" description="Quantity / alert threshold" icon={AlertTriangle}>
             <AlertList items={report.outOfStock} tone="destructive" />
-          </div>
+          </ReportPanel>
         )}
         {report.lowStock.length > 0 && (
-          <div className="rounded-xl border border-border p-4">
-            <h3 className="mb-3 text-sm font-semibold">{t("Low stock")}</h3>
+          <ReportPanel title="Low stock" description="Quantity / alert threshold" icon={Package}>
             <AlertList items={report.lowStock} tone="warning" />
-          </div>
+          </ReportPanel>
         )}
       </div>
     </div>

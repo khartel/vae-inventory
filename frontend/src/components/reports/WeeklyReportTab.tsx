@@ -1,4 +1,8 @@
-﻿import { useState } from "react"
+﻿import { ReportToolbar, ReportDateField, ReportMetrics, ReportProfitNote, ReportBreakdowns } from "./ReportLayout"
+import { ReportSalesChart, ReportPaymentMix } from "./ReportCharts"
+import { Button } from "@/components/ui/button"
+import { averageDailySales } from "./report-data"
+import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import * as reportService from "@/services/report.service"
 import type { WeeklyReport } from "@/services/report.service"
@@ -9,9 +13,7 @@ import { downloadCsv } from "@/lib/csv"
 import { downloadPdfReport } from "@/lib/pdf"
 import { EmptyState } from "@/components/EmptyState"
 import { ErrorState } from "@/components/ErrorState"
-import { SummaryStat } from "@/components/reports/SummaryStat"
 import { DownloadMenu } from "@/components/reports/DownloadMenu"
-import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CalendarRange } from "lucide-react"
 import { useTranslation } from "react-i18next"
@@ -44,7 +46,7 @@ function fullReportCsvRows(report: WeeklyReport, currency: string) {
     [],
     ["Total sales", report.summary.totalAmount],
     ["Transactions", report.summary.totalTransactions],
-    ["Avg / day", report.summary.avgDailySales ?? 0],
+    ["Avg / day", averageDailySales(report.summary, report.dailyBreakdown)],
     ["Best day", report.summary.bestDay?.dayName ?? ""],
     ["Profit", report.summary.hasIncompleteCostData ? `${report.summary.totalProfit} (incomplete cost data)` : report.summary.totalProfit],
     [],
@@ -78,7 +80,7 @@ export function WeeklyReportTab() {
   const query = useQuery({
     queryKey: ["report-weekly", activeBusinessId, date],
     queryFn: () => reportService.getWeeklyReport(activeBusinessId!, date),
-    enabled: !!activeBusinessId,
+    enabled: !!activeBusinessId && !!date,
   })
 
   // Shared header fields for every PDF export below.
@@ -124,7 +126,7 @@ export function WeeklyReportTab() {
           body: [
             ["Total sales", formatMoney(report.summary.totalAmount, currency)],
             ["Transactions", report.summary.totalTransactions],
-            ["Avg / day", formatMoney(report.summary.avgDailySales ?? 0, currency)],
+            ["Avg / day", formatMoney(averageDailySales(report.summary, report.dailyBreakdown), currency)],
             ["Best day", report.summary.bestDay?.dayName ?? ""],
             ["Profit", formatMoney(report.summary.totalProfit, currency) + (report.summary.hasIncompleteCostData ? " *" : "")],
           ],
@@ -151,129 +153,24 @@ export function WeeklyReportTab() {
   }
 
   const dateControls = (
-    <div className="flex flex-wrap items-center gap-2">
-      <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-auto" />
-      <span className="text-xs text-muted-foreground">{t("Pick any day in the week")}</span>
-      <DownloadMenu
-        className="ml-auto"
-        disabled={!query.data}
-        groups={[
-          { label: "Items sold", items: [{ label: "CSV", onClick: downloadItemsCsv }, { label: "PDF", onClick: downloadItemsPdf }] },
-          { label: "Full report", items: [{ label: "CSV", onClick: downloadFullCsv }, { label: "PDF", onClick: downloadFullPdf }] },
-        ]}
-      />
-    </div>
+    <ReportToolbar title="Weekly overview" period={query.data ? formatDate(query.data.weekStart + "T12:00:00") + " – " + formatDate(query.data.weekEnd + "T12:00:00") : undefined} actions={
+      <DownloadMenu disabled={!query.data || !date} groups={[
+        { label: "Items sold", items: [{ label: "CSV", onClick: downloadItemsCsv }, { label: "PDF", onClick: downloadItemsPdf }] },
+        { label: "Full report", items: [{ label: "CSV", onClick: downloadFullCsv }, { label: "PDF", onClick: downloadFullPdf }] },
+      ]} />
+    }><ReportDateField label="Week containing" value={date} onChange={setDate} /><Button variant="ghost" size="sm" onClick={() => setDate(todayIso())}>{t("This week")}</Button></ReportToolbar>
   )
-
-  if (query.isLoading) {
-    return (
-      <div className="space-y-4">
-        {dateControls}
-        <Skeleton className="h-64 rounded-xl" />
-      </div>
-    )
-  }
-  if (query.isError) {
-    return (
-      <div className="space-y-4">
-        {dateControls}
-        <ErrorState onRetry={() => query.refetch()} />
-      </div>
-    )
-  }
+  if (!date) return <div className="report-view">{dateControls}<p className="report-date-error">{t("Select a date to view this report.")}</p></div>
+  if (query.isLoading) return <div className="report-view">{dateControls}<Skeleton className="h-64 rounded-xl" /></div>
+  if (query.isError) return <div className="report-view">{dateControls}<ErrorState onRetry={() => query.refetch()} /></div>
   const report = query.data
   if (!report) return null
-
-  if (report.summary.totalTransactions === 0) {
-    return (
-      <div className="space-y-4">
-        {dateControls}
-        <EmptyState
-          icon={<CalendarRange className="size-6" />}
-          title="No sales this week"
-          description={`${formatDate(report.weekStart)} – ${formatDate(report.weekEnd)}`}
-        />
-      </div>
-    )
-  }
-
-  // Denominator for the daily-breakdown bar widths; floored at 1 to avoid divide-by-zero
-  // when every day in the week had zero sales.
-  const maxDayAmount = Math.max(...report.dailyBreakdown.map((d) => d.totalAmount), 1)
-
-  return (
-    <div className="space-y-4">
-      {dateControls}
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
-        <SummaryStat label="Total sales" value={formatMoney(report.summary.totalAmount, currency)} />
-        <SummaryStat label="Transactions" value={report.summary.totalTransactions} />
-        <SummaryStat
-          label="Avg / day"
-          value={formatMoney(report.summary.avgDailySales ?? 0, currency)}
-        />
-        <SummaryStat
-          label="Best day"
-          value={report.summary.bestDay ? report.summary.bestDay.dayName : "—"}
-        />
-        <SummaryStat label="Profit" value={formatMoney(report.summary.totalProfit, currency)} />
-      </div>
-      {report.summary.hasIncompleteCostData && (
-        <p className="text-xs text-muted-foreground">
-          {t("Profit is based on products with a recorded cost price — some sales this week involved products with no cost price set, so this figure is incomplete.")}
-        </p>
-      )}
-
-      <div className="rounded-xl border border-border p-4">
-        <h3 className="mb-3 text-sm font-semibold">{t("Daily breakdown")}</h3>
-        <ul className="space-y-2">
-          {report.dailyBreakdown.map((day) => (
-            <li key={day.date} className="flex items-center gap-3 text-sm">
-              <span className="w-24 shrink-0 text-muted-foreground">{day.dayName}</span>
-              <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-primary to-success"
-                  style={{ width: `${(day.totalAmount / maxDayAmount) * 100}%` }}
-                />
-              </div>
-              <span className="w-28 shrink-0 text-right font-medium">
-                {formatMoney(day.totalAmount, currency)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div className="rounded-xl border border-border p-4">
-          <h3 className="mb-3 text-sm font-semibold">{t("By employee")}</h3>
-          <ul className="space-y-2 text-sm">
-            {report.byEmployee.map((row) => (
-              <li key={row.employee.id} className="flex justify-between">
-                <span>{row.employee.fullName}</span>
-                <span className="font-medium">{formatMoney(row.totalAmount, currency)}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div className="rounded-xl border border-border p-4">
-          <h3 className="mb-3 text-sm font-semibold">{t("By product")}</h3>
-          <ul className="space-y-2 text-sm">
-            {report.byProduct.map((row) => (
-              <li key={row.product.id} className="flex justify-between">
-                <span>
-                  {row.product.name} × {row.totalQuantity} {row.product.unit}
-                </span>
-                <span className="text-right">
-                  <span className="block font-medium">{formatMoney(row.totalRevenue, currency)}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {t("Profit")}: {formatMoney(row.totalProfit, currency)}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-    </div>
-  )
+  if (report.summary.totalTransactions === 0) return <div className="report-view">{dateControls}<EmptyState icon={<CalendarRange className="size-6" />} title="No sales this week" description={formatDate(report.weekStart) + " – " + formatDate(report.weekEnd)} /></div>
+  return <div className="report-view">
+    {dateControls}
+    <ReportMetrics summary={report.summary} currency={currency} days={report.dailyBreakdown} />
+    <ReportProfitNote incomplete={report.summary.hasIncompleteCostData} />
+    <div className="report-overview"><ReportSalesChart description="Gross sales across the calendar week" currency={currency} points={report.dailyBreakdown.map((day) => ({ key: day.date, label: new Date(day.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric" }), amount: day.totalAmount, count: day.transactionCount }))} /><ReportPaymentMix summary={report.summary} currency={currency} /></div>
+    <ReportBreakdowns employees={report.byEmployee} products={report.byProduct} currency={currency} />
+  </div>
 }

@@ -1,4 +1,5 @@
-﻿import { useState } from "react"
+﻿import { ReportToolbar, ReportDateField, ReportProfitNote } from "./ReportLayout"
+import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import * as reportService from "@/services/report.service"
 import { useAuth } from "@/context/AuthContext"
@@ -11,7 +12,6 @@ import { ErrorState } from "@/components/ErrorState"
 import { DownloadMenu } from "@/components/reports/DownloadMenu"
 import { TransactionDetailSheet } from "@/components/transactions/TransactionDetailSheet"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Receipt, Users } from "lucide-react"
 import { useTranslation } from "react-i18next"
@@ -44,10 +44,12 @@ export function EmployeeReportTab() {
   const [expandedEmployeeId, setExpandedEmployeeId] = useState<string | null>(null)
   const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null)
 
+  const invalidRange = !startDate || !endDate || startDate > endDate
+
   const query = useQuery({
     queryKey: ["report-employees", activeBusinessId, startDate, endDate],
     queryFn: () => reportService.getEmployeeReport(activeBusinessId!, startDate, endDate),
-    enabled: !!activeBusinessId,
+    enabled: !!activeBusinessId && !invalidRange,
   })
 
   const downloadAsCsv = () => {
@@ -96,22 +98,12 @@ export function EmployeeReportTab() {
     })
   }
 
-  const dateControls = (
-    <div className="flex flex-wrap items-center gap-2">
-      <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-auto" />
-      <span className="text-xs text-muted-foreground">{t("to")}</span>
-      <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-auto" />
-      <DownloadMenu
-        className="ml-auto"
-        disabled={!query.data}
-        groups={[{ items: [{ label: "CSV", onClick: downloadAsCsv }, { label: "PDF", onClick: downloadAsPdf }] }]}
-      />
-    </div>
-  )
+  const dateControls = <ReportToolbar title="Team performance" actions={<DownloadMenu disabled={!query.data || invalidRange} groups={[{ items: [{ label: "CSV", onClick: downloadAsCsv }, { label: "PDF", onClick: downloadAsPdf }] }]} />}><ReportDateField label="From" value={startDate} onChange={setStartDate} /><ReportDateField label="To" value={endDate} onChange={setEndDate} /></ReportToolbar>
+  if (invalidRange) return <div className="report-view">{dateControls}<p className="report-date-error" role="status">{t("Select a valid date range.")}</p></div>
 
   if (query.isLoading) {
     return (
-      <div className="space-y-4">
+      <div className="report-view">
         {dateControls}
         <Skeleton className="h-64 rounded-xl" />
       </div>
@@ -119,7 +111,7 @@ export function EmployeeReportTab() {
   }
   if (query.isError) {
     return (
-      <div className="space-y-4">
+      <div className="report-view">
         {dateControls}
         <ErrorState onRetry={() => query.refetch()} />
       </div>
@@ -130,7 +122,7 @@ export function EmployeeReportTab() {
 
   if (report.employees.length === 0) {
     return (
-      <div className="space-y-4">
+      <div className="report-view">
         {dateControls}
         <EmptyState icon={<Users className="size-6" />} title="No employee activity" description="No sales recorded by any employee in this period." />
       </div>
@@ -138,21 +130,18 @@ export function EmployeeReportTab() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="report-view">
       {dateControls}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div className="report-columns">
         {report.employees.map(({ employee, businessRole, summary, topProducts, transactions }) => {
           const isExpanded = expandedEmployeeId === employee.id
           return (
-            <div key={employee.id} className="rounded-xl border border-border p-4">
-              <div className="mb-3 flex items-start justify-between">
-                <div>
-                  <h3 className="font-heading text-sm font-semibold">{employee.fullName}</h3>
-                  <p className="text-xs text-muted-foreground">{businessRole}</p>
-                </div>
-                <p className="text-right font-medium">{formatMoney(summary.totalAmount, currency)}</p>
+            <div key={employee.id} className="report-panel">
+              <div className="report-employee-header">
+                <div className="report-employee-identity"><span className="report-avatar" aria-hidden="true">{employee.fullName.split(" ").map((part) => part[0]).slice(0, 2).join("")}</span><div><h3>{employee.fullName}</h3><small>{businessRole}</small></div></div>
+                <strong>{formatMoney(summary.totalAmount, currency)}</strong>
               </div>
-              <div className="mb-3 grid grid-cols-4 gap-2 text-center text-xs">
+              <div className="report-employee-stats">
                 <div>
                   <p className="font-semibold">{summary.transactionCount}</p>
                   <p className="text-muted-foreground">{t("Sales")}</p>
@@ -170,15 +159,11 @@ export function EmployeeReportTab() {
                   <p className="text-muted-foreground">{t("Profit")}</p>
                 </div>
               </div>
-              {summary.hasIncompleteCostData && (
-                <p className="mb-3 text-xs text-muted-foreground">
-                  {t("Profit figure is incomplete — some sold products have no cost price set.")}
-                </p>
-              )}
+              <ReportProfitNote incomplete={summary.hasIncompleteCostData} />
               {topProducts.length > 0 && (
                 <div className="mb-3">
                   <p className="mb-1 text-xs font-medium text-muted-foreground">{t("Top products")}</p>
-                  <ul className="space-y-1 text-sm">
+                  <ul className="report-employee-products space-y-1 text-sm">
                     {topProducts.map((row) => (
                       <li key={row.product.id} className="flex justify-between">
                         <span>{row.product.name}</span>
@@ -195,6 +180,7 @@ export function EmployeeReportTab() {
                   variant="ghost"
                   size="sm"
                   className="w-full justify-start px-0 text-xs text-muted-foreground hover:text-foreground"
+                  aria-expanded={isExpanded}
                   onClick={() => setExpandedEmployeeId(isExpanded ? null : employee.id)}
                 >
                   <Receipt className="size-3.5" />
@@ -208,6 +194,7 @@ export function EmployeeReportTab() {
                     <li key={tx.id}>
                       <button
                         type="button"
+                        aria-label={t("Open receipt {{id}}", { id: tx.id.slice(0, 8).toUpperCase() })}
                         onClick={() => setSelectedTransactionId(tx.id)}
                         className="flex w-full items-center justify-between rounded-md px-1.5 py-1 text-left hover:bg-muted"
                       >

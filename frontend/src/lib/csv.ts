@@ -1,5 +1,6 @@
 // Small helper for building and downloading CSV files client-side (used by
 // report/export features so users can save data as a spreadsheet).
+import { downloadBlob } from "./download-blob"
 
 // Escapes a single CSV cell value: wraps it in double quotes (and doubles
 // any internal quotes) if it contains a comma, quote, or newline that would
@@ -26,12 +27,5 @@ export function toCsv(rows: (string | number)[][]): string {
  */
 export function downloadCsv(filename: string, rows: (string | number)[][]) {
   const blob = new Blob([toCsv(rows)], { type: "text/csv;charset=utf-8;" })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement("a")
-  link.href = url
-  link.download = filename
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  URL.revokeObjectURL(url)
+  downloadBlob(filename, blob)
 }

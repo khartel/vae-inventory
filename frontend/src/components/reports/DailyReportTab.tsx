@@ -1,4 +1,9 @@
-﻿import { useState } from "react"
+﻿import { ReportToolbar, ReportDateField, ReportMetrics, ReportProfitNote, ReportBreakdowns, ReportPanel } from "./ReportLayout"
+import { ReportSalesChart, ReportPaymentMix } from "./ReportCharts"
+import { Button } from "@/components/ui/button"
+import { hourlySales } from "./report-data"
+import { ReceiptText } from "lucide-react"
+import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import * as reportService from "@/services/report.service"
 import type { DailyReport } from "@/services/report.service"
@@ -9,11 +14,9 @@ import { downloadCsv } from "@/lib/csv"
 import { downloadPdfReport } from "@/lib/pdf"
 import { EmptyState } from "@/components/EmptyState"
 import { ErrorState } from "@/components/ErrorState"
-import { SummaryStat } from "@/components/reports/SummaryStat"
 import { DownloadMenu } from "@/components/reports/DownloadMenu"
 import { TransactionDetailSheet } from "@/components/transactions/TransactionDetailSheet"
 import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -99,7 +102,7 @@ export function DailyReportTab() {
   const query = useQuery({
     queryKey: ["report-daily", activeBusinessId, date],
     queryFn: () => reportService.getDailyReport(activeBusinessId!, date),
-    enabled: !!activeBusinessId,
+    enabled: !!activeBusinessId && !!date,
   })
 
   // Shared header fields (business name/location, report title, date line) passed to
@@ -174,131 +177,34 @@ export function DailyReportTab() {
   }
 
   const dateControls = (
-    <div className="flex flex-wrap items-center gap-2">
-      <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-auto" />
-      <DownloadMenu
-        className="ml-auto"
-        disabled={!query.data}
-        groups={[
-          { label: "Items sold", items: [{ label: "CSV", onClick: downloadItemsCsv }, { label: "PDF", onClick: downloadItemsPdf }] },
-          { label: "Full report", items: [{ label: "CSV", onClick: downloadFullCsv }, { label: "PDF", onClick: downloadFullPdf }] },
-        ]}
-      />
-    </div>
+    <ReportToolbar title="Daily overview" period={date ? formatDate(date + "T12:00:00") : undefined} actions={
+      <DownloadMenu disabled={!query.data || !date} groups={[
+        { label: "Items sold", items: [{ label: "CSV", onClick: downloadItemsCsv }, { label: "PDF", onClick: downloadItemsPdf }] },
+        { label: "Full report", items: [{ label: "CSV", onClick: downloadFullCsv }, { label: "PDF", onClick: downloadFullPdf }] },
+      ]} />
+    }><ReportDateField label="Report date" value={date} onChange={setDate} /><Button variant="ghost" size="sm" onClick={() => setDate(todayIso())}>{t("Today")}</Button></ReportToolbar>
   )
-
-  if (query.isLoading) {
-    return (
-      <div className="space-y-4">
-        {dateControls}
-        <Skeleton className="h-64 rounded-xl" />
-      </div>
-    )
-  }
-  if (query.isError) {
-    return (
-      <div className="space-y-4">
-        {dateControls}
-        <ErrorState onRetry={() => query.refetch()} />
-      </div>
-    )
-  }
+  if (!date) return <div className="report-view">{dateControls}<p className="report-date-error">{t("Select a date to view this report.")}</p></div>
+  if (query.isLoading) return <div className="report-view">{dateControls}<Skeleton className="h-64 rounded-xl" /></div>
+  if (query.isError) return <div className="report-view">{dateControls}<ErrorState onRetry={() => query.refetch()} /></div>
   const report = query.data
   if (!report) return null
+  if (report.summary.totalTransactions === 0) return <div className="report-view">{dateControls}<EmptyState icon={<CalendarDays className="size-6" />} title="No sales that day" description={report.date} /></div>
 
-  if (report.summary.totalTransactions === 0) {
-    return (
-      <div className="space-y-4">
-        {dateControls}
-        <EmptyState icon={<CalendarDays className="size-6" />} title="No sales that day" description={report.date} />
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-4">
-      {dateControls}
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
-        <SummaryStat label="Total sales" value={formatMoney(report.summary.totalAmount, currency)} />
-        <SummaryStat label="Transactions" value={report.summary.totalTransactions} />
-        <SummaryStat label="Cash" value={formatMoney(report.summary.cashTotal, currency)} />
-        <SummaryStat label="Transfer" value={formatMoney(report.summary.transferTotal, currency)} />
-        <SummaryStat label="Profit" value={formatMoney(report.summary.totalProfit, currency)} />
-      </div>
-      {report.summary.hasIncompleteCostData && (
-        <p className="text-xs text-muted-foreground">
-          {t("Profit is based on products with a recorded cost price — some sales today involved products with no cost price set, so this figure is incomplete.")}
-        </p>
-      )}
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div className="rounded-xl border border-border p-4">
-          <h3 className="mb-3 text-sm font-semibold">{t("By employee")}</h3>
-          <ul className="space-y-2 text-sm">
-            {report.byEmployee.map((row) => (
-              <li key={row.employee.id} className="flex justify-between">
-                <span>{row.employee.fullName}</span>
-                <span className="font-medium">{formatMoney(row.totalAmount, currency)}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div className="rounded-xl border border-border p-4">
-          <h3 className="mb-3 text-sm font-semibold">{t("By product")}</h3>
-          <ul className="space-y-2 text-sm">
-            {report.byProduct.map((row) => (
-              <li key={row.product.id} className="flex justify-between">
-                <span>
-                  {row.product.name} × {row.totalQuantity} {row.product.unit}
-                </span>
-                <span className="text-right">
-                  <span className="block font-medium">{formatMoney(row.totalRevenue, currency)}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {t("Profit")}: {formatMoney(row.totalProfit, currency)}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t("Time")}</TableHead>
-              <TableHead>{t("Served by")}</TableHead>
-              <TableHead>{t("Payment")}</TableHead>
-              <TableHead className="text-right">{t("Total")}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {report.transactions.map((tx) => (
-              <TableRow
-                key={tx.id}
-                className="cursor-pointer"
-                onClick={() => setSelectedTransactionId(tx.id)}
-              >
-                <TableCell className="text-muted-foreground">{formatTime(tx.createdAt)}</TableCell>
-                <TableCell>{tx.performedBy.fullName}</TableCell>
-                <TableCell>
-                  <Badge variant="secondary">{tx.paymentMethod}</Badge>
-                </TableCell>
-                <TableCell className="text-right font-medium">{formatMoney(tx.totalAmount, currency)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
-
-      {activeBusinessId && (
-        <TransactionDetailSheet
-          businessId={activeBusinessId}
-          transactionId={selectedTransactionId}
-          onOpenChange={(open) => !open && setSelectedTransactionId(null)}
-        />
-      )}
-    </div>
-  )
+  return <div className="report-view">
+    {dateControls}
+    <ReportMetrics summary={report.summary} currency={currency} />
+    <ReportProfitNote incomplete={report.summary.hasIncompleteCostData} />
+    <div className="report-overview"><ReportSalesChart title="Sales activity" description="Sales by hour · local time" points={hourlySales(report.transactions)} currency={currency} /><ReportPaymentMix summary={report.summary} currency={currency} /></div>
+    <ReportBreakdowns employees={report.byEmployee} products={report.byProduct} currency={currency} />
+    <ReportPanel title="Transactions" description="Open a receipt to see the full sale." icon={ReceiptText} className="report-table-panel">
+      <Table><TableHeader><TableRow><TableHead>{t("Receipt #")}</TableHead><TableHead>{t("Time")}</TableHead><TableHead>{t("Served by")}</TableHead><TableHead>{t("Payment")}</TableHead><TableHead className="text-right">{t("Total")}</TableHead></TableRow></TableHeader><TableBody>
+        {report.transactions.map((tx) => <TableRow key={tx.id} className="cursor-pointer" onClick={() => setSelectedTransactionId(tx.id)}>
+          <TableCell><button type="button" className="report-receipt-link" onClick={() => setSelectedTransactionId(tx.id)} aria-label={t("Open receipt {{id}}", { id: tx.id.slice(0, 8).toUpperCase() })}>{tx.id.slice(0, 8).toUpperCase()}</button></TableCell>
+          <TableCell className="text-muted-foreground">{formatTime(tx.createdAt)}</TableCell><TableCell>{tx.performedBy.fullName}</TableCell><TableCell><Badge variant="secondary">{t(tx.paymentMethod)}</Badge></TableCell><TableCell className="text-right font-medium">{formatMoney(tx.totalAmount, currency)}</TableCell>
+        </TableRow>)}
+      </TableBody></Table>
+    </ReportPanel>
+    {activeBusinessId && <TransactionDetailSheet businessId={activeBusinessId} transactionId={selectedTransactionId} onOpenChange={(open) => !open && setSelectedTransactionId(null)} />}
+  </div>
 }

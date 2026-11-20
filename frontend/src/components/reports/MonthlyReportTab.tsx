@@ -1,4 +1,7 @@
-﻿import { useState } from "react"
+﻿import { ReportToolbar, ReportDateField, ReportMetrics, ReportProfitNote, ReportBreakdowns } from "./ReportLayout"
+import { ReportSalesChart, ReportPaymentMix } from "./ReportCharts"
+import { Button } from "@/components/ui/button"
+import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import * as reportService from "@/services/report.service"
 import type { MonthlyReport } from "@/services/report.service"
@@ -9,9 +12,7 @@ import { downloadCsv } from "@/lib/csv"
 import { downloadPdfReport } from "@/lib/pdf"
 import { EmptyState } from "@/components/EmptyState"
 import { ErrorState } from "@/components/ErrorState"
-import { SummaryStat } from "@/components/reports/SummaryStat"
 import { DownloadMenu } from "@/components/reports/DownloadMenu"
-import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CalendarDays } from "lucide-react"
 import { useTranslation } from "react-i18next"
@@ -78,7 +79,7 @@ export function MonthlyReportTab() {
   const query = useQuery({
     queryKey: ["report-monthly", activeBusinessId, year, monthNum],
     queryFn: () => reportService.getMonthlyReport(activeBusinessId!, year, monthNum),
-    enabled: !!activeBusinessId,
+    enabled: !!activeBusinessId && !!month,
   })
 
   // Shared header fields for every PDF export below.
@@ -151,111 +152,24 @@ export function MonthlyReportTab() {
   }
 
   const dateControls = (
-    <div className="flex flex-wrap items-center gap-2">
-      <Input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="w-auto" />
-      <DownloadMenu
-        className="ml-auto"
-        disabled={!query.data}
-        groups={[
-          { label: "Items sold", items: [{ label: "CSV", onClick: downloadItemsCsv }, { label: "PDF", onClick: downloadItemsPdf }] },
-          { label: "Full report", items: [{ label: "CSV", onClick: downloadFullCsv }, { label: "PDF", onClick: downloadFullPdf }] },
-        ]}
-      />
-    </div>
+    <ReportToolbar title="Monthly overview" period={query.data ? query.data.month : undefined} actions={
+      <DownloadMenu disabled={!query.data || !month} groups={[
+        { label: "Items sold", items: [{ label: "CSV", onClick: downloadItemsCsv }, { label: "PDF", onClick: downloadItemsPdf }] },
+        { label: "Full report", items: [{ label: "CSV", onClick: downloadFullCsv }, { label: "PDF", onClick: downloadFullPdf }] },
+      ]} />
+    }><ReportDateField label="Report month" month value={month} onChange={setMonth} /><Button variant="ghost" size="sm" onClick={() => setMonth(currentMonthIso())}>{t("This month")}</Button></ReportToolbar>
   )
-
-  if (query.isLoading) {
-    return (
-      <div className="space-y-4">
-        {dateControls}
-        <Skeleton className="h-64 rounded-xl" />
-      </div>
-    )
-  }
-  if (query.isError) {
-    return (
-      <div className="space-y-4">
-        {dateControls}
-        <ErrorState onRetry={() => query.refetch()} />
-      </div>
-    )
-  }
+  if (!month) return <div className="report-view">{dateControls}<p className="report-date-error">{t("Select a date to view this report.")}</p></div>
+  if (query.isLoading) return <div className="report-view">{dateControls}<Skeleton className="h-64 rounded-xl" /></div>
+  if (query.isError) return <div className="report-view">{dateControls}<ErrorState onRetry={() => query.refetch()} /></div>
   const report = query.data
   if (!report) return null
-
-  if (report.summary.totalTransactions === 0) {
-    return (
-      <div className="space-y-4">
-        {dateControls}
-        <EmptyState icon={<CalendarDays className="size-6" />} title="No sales this month" description={report.month} />
-      </div>
-    )
-  }
-
-  // Denominator for the daily-breakdown bar heights; floored at 1 to avoid divide-by-zero.
-  const maxDayAmount = Math.max(...report.dailyBreakdown.map((d) => d.totalAmount), 1)
-
-  return (
-    <div className="space-y-4">
-      {dateControls}
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
-        <SummaryStat label="Total sales" value={formatMoney(report.summary.totalAmount, currency)} />
-        <SummaryStat label="Transactions" value={report.summary.totalTransactions} />
-        <SummaryStat label="Avg / day" value={formatMoney(report.summary.avgDailySales ?? 0, currency)} />
-        <SummaryStat label="Best day" value={report.summary.bestDay ? report.summary.bestDay.dayName : "—"} />
-        <SummaryStat label="Profit" value={formatMoney(report.summary.totalProfit, currency)} />
-      </div>
-      {report.summary.hasIncompleteCostData && (
-        <p className="text-xs text-muted-foreground">
-          {t("Profit is based on products with a recorded cost price — some sales this month involved products with no cost price set, so this figure is incomplete.")}
-        </p>
-      )}
-
-      <div className="rounded-xl border border-border p-4">
-        <h3 className="mb-3 text-sm font-semibold">{t("Daily breakdown")}</h3>
-        <div className="flex h-32 items-end gap-1">
-          {report.dailyBreakdown.map((day) => (
-            <div
-              key={day.date}
-              title={`${day.dayName}: ${formatMoney(day.totalAmount, currency)}`}
-              className="flex-1 rounded-t bg-gradient-to-t from-primary to-success opacity-70 transition-opacity hover:opacity-100"
-              style={{ height: `${Math.max((day.totalAmount / maxDayAmount) * 100, 2)}%` }}
-            />
-          ))}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div className="rounded-xl border border-border p-4">
-          <h3 className="mb-3 text-sm font-semibold">{t("By employee")}</h3>
-          <ul className="space-y-2 text-sm">
-            {report.byEmployee.map((row) => (
-              <li key={row.employee.id} className="flex justify-between">
-                <span>{row.employee.fullName}</span>
-                <span className="font-medium">{formatMoney(row.totalAmount, currency)}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div className="rounded-xl border border-border p-4">
-          <h3 className="mb-3 text-sm font-semibold">{t("By product")}</h3>
-          <ul className="space-y-2 text-sm">
-            {report.byProduct.map((row) => (
-              <li key={row.product.id} className="flex justify-between">
-                <span>
-                  {row.product.name} × {row.totalQuantity} {row.product.unit}
-                </span>
-                <span className="text-right">
-                  <span className="block font-medium">{formatMoney(row.totalRevenue, currency)}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {t("Profit")}: {formatMoney(row.totalProfit, currency)}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-    </div>
-  )
+  if (report.summary.totalTransactions === 0) return <div className="report-view">{dateControls}<EmptyState icon={<CalendarDays className="size-6" />} title="No sales this month" description={report.month} /></div>
+  return <div className="report-view">
+    {dateControls}
+    <ReportMetrics summary={report.summary} currency={currency} days={report.dailyBreakdown} />
+    <ReportProfitNote incomplete={report.summary.hasIncompleteCostData} />
+    <div className="report-overview"><ReportSalesChart description="Gross sales across the calendar month" currency={currency} points={report.dailyBreakdown.map((day) => ({ key: day.date, label: String(Number(day.date.slice(-2))), amount: day.totalAmount, count: day.transactionCount }))} /><ReportPaymentMix summary={report.summary} currency={currency} /></div>
+    <ReportBreakdowns employees={report.byEmployee} products={report.byProduct} currency={currency} />
+  </div>
 }

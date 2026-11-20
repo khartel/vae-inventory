@@ -233,17 +233,14 @@
   }
 }
 
-/* No `size:` here on purpose - leaving it unset means the receipt follows
-   whatever paper size the user picks in their print dialog (A4, A5, Letter,
-   ...) instead of forcing one. `margin` just keeps a consistent frame around
-   the content on any of them. Browser-injected print headers/footers (page
-   title, URL, date, page number) live outside this page box entirely - they
-   come from the browser's own "Headers and footers" print-dialog setting,
-   which no page CSS can reach; turning that checkbox off is the only way to
-   remove them, and it's a one-time, per-browser setting rather than
-   something this app can control per-print. */
+/* Leave paper size to the printer dialog. Chromium adds its page title,
+   URL and print timestamp in the page margins when there is room, so keep
+   those margins empty and put the receipt's spacing INSIDE its own box.
+   Browsers/user print overrides may still require "Headers and footers"
+   to be disabled in the print dialog; window.print() cannot set that option.
+   https://developer.chrome.com/blog/print-margins */
 @page {
-  margin: 12mm;
+  margin: 0;
 }
 
 /* Receipt printing: hide the whole app by default when printing, reveal only
@@ -251,6 +248,20 @@
    plain white document (see TransactionDetailSheet), so printing just needs to
    drop the app chrome and any glass/blur/shadow around it. */
 @media print {
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+  }
+  /* Radix locks body scrolling while the dialog is open. That lock and
+     its scrollbar compensation must not constrain printed pages. */
+  body[data-scroll-locked]:has(.receipt-print-area) {
+    overflow: visible !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
   body * {
     visibility: hidden;
   }
@@ -288,6 +299,12 @@
   }
   [data-slot="dialog-content"]:has(.receipt-print-area) {
     position: static !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    background: white !important;
+    backdrop-filter: none !important;
+    box-shadow: none !important;
     /* Tailwind v4 compiles -translate-x-1/2/-translate-y-1/2 to the native
        `translate` property, not a `transform:` string - and a non-none
        `translate` (like `transform`) establishes its own containing block,
@@ -315,8 +332,12 @@
      .receipt-print-area's own descendants two levels down, which still need
      their internal flex/grid rows (the business-name/RECEIPT header row,
      the totals block, etc.) to lay out correctly. */
-  [data-slot="dialog-content"]:has(.receipt-print-area) > div {
+  [data-slot="dialog-content"]:has(.receipt-print-area) > div:not(.print\:hidden) {
     display: block !important;
+  }
+  [data-slot="dialog-content"]:has(.receipt-print-area) .print\:hidden,
+  [data-slot="dialog-content"]:has(.receipt-print-area) [data-slot="dialog-close"] {
+    display: none !important;
   }
   /* DialogContent (and the scrollable body div inside it) are capped with
      max-height + overflow so long dialogs scroll internally on screen - but
@@ -343,8 +364,18 @@
        sizes to its real content, no containing-block guesswork involved. */
     position: static;
     width: 100%;
+    margin: 0 !important;
+    padding: 12mm !important;
+    /* Repeat the inner frame on each fragment of a multi-page receipt. */
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
     backdrop-filter: none !important;
     box-shadow: none !important;
     border: none !important;
+  }
+  .receipt-print-area tr {
+    break-inside: avoid;
   }
 }

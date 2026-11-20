@@ -2,6 +2,7 @@
 // sales/product/employee reports) using jsPDF + jspdf-autotable.
 import { jsPDF } from "jspdf"
 import autoTable from "jspdf-autotable"
+import { downloadBlob } from "./download-blob"
 
 // Shared color palette for the generated PDF, matching the app's slate
 // theme so exports look consistent with the on-screen receipt/report UI.
@@ -101,5 +102,6 @@ export function downloadPdfReport(filename: string, options: PdfReportOptions) {
     doc.text(options.footerNote, pageWidth / 2, cursorY, { align: "center" })
   }
 
-  doc.save(filename)
+  // Keep CSV and PDF on the same browser download/URL-cleanup path.
+  downloadBlob(filename, doc.output("blob"))
 }
