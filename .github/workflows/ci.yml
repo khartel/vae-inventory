@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (Prisma + Jest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres_ci_password
+          POSTGRES_DB: business_webapp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d business_webapp_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci
+
+      - name: Configure isolated test environment
+        run: |
+          cat <<'EOF' > .env.test
+          NODE_ENV=test
+          PORT=5000
+          DATABASE_URL=postgresql://postgres:postgres_ci_password@127.0.0.1:5432/business_webapp_test?schema=public
+          JWT_SECRET=ci-only-jwt-secret-not-for-production-use-0123456789abcdef
+          MASTER_KEY=ci-only-master-key-not-for-production-use-0123456789abcdef
+          CLIENT_URL=http://localhost:5173
+          EOF
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Apply migrations to disposable test database
+        run: npm run test:migrate
+
+      - name: Run backend test suite
+        run: npm test
+
+  frontend:
+    name: Frontend (Typecheck + Lint + Build + Vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check and production build
+        run: npm run build
+
+      - name: Run frontend tests (bounded workers)
+        run: npm test -- --run --maxWorkers=2
