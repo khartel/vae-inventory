@@ -10,6 +10,7 @@ import * as stockService from "@/services/stock.service"
 import * as warehouseService from "@/services/warehouse.service"
 import * as productService from "@/services/product.service"
 import { getUnitChoices } from "@/lib/units"
+import { invalidateStockQueries } from "@/lib/stock-movements"
 import { useAuth } from "@/context/AuthContext"
 import { ApiError } from "@/lib/api-client"
 import { Button } from "@/components/ui/button"
@@ -146,10 +147,7 @@ export function ReceiveStockDialog() {
         }),
       }),
     onSuccess: (_, values) => {
-      queryClient.invalidateQueries({ queryKey: ["products", activeBusinessId] })
-      queryClient.invalidateQueries({ queryKey: ["warehouses", activeBusinessId] })
-      queryClient.invalidateQueries({ queryKey: ["stock-movements", activeBusinessId] })
-      queryClient.invalidateQueries({ queryKey: ["stock", activeBusinessId] })
+      invalidateStockQueries(queryClient, activeBusinessId)
       toast.success(
         values.items.length === 1
           ? t("Stock added")

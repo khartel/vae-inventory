@@ -24,5 +24,19 @@
   "Search products in this warehouse...": "Rechercher des produits dans cet entrepôt...",
   "Warehouse": "Entrepôt",
   "Add stock to this warehouse to see products here.": "Ajoutez du stock à cet entrepôt pour voir des produits ici.",
-  "No products here yet": "Aucun produit ici pour l'instant"
+  "No products here yet": "Aucun produit ici pour l'instant",
+  "Inventory management": "Gestion des stocks",
+  "A clearer view of where your stock lives.": "Une vue plus claire des emplacements de votre stock.",
+  "Storage locations for this business": "Emplacements de stockage de cette entreprise",
+  "Primary location": "Emplacement principal",
+  "Default stock location": "Emplacement de stock par défaut",
+  "Not set": "Non défini",
+  "Stock records": "Références en stock",
+  "Product entries across locations": "Références produit dans tous les emplacements",
+  "All locations": "Tous les emplacements",
+  "Storage location": "Emplacement de stockage",
+  "{{count}} warehouse": "{{count}} entrepôt",
+  "{{count}} warehouses_one": "{{count}} entrepôt",
+  "{{count}} warehouses_other": "{{count}} entrepôts",
+  "Select a warehouse to view its stock.": "Sélectionnez un entrepôt pour consulter son stock."
 }

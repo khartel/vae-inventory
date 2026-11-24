@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useForm, Controller } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -10,6 +10,7 @@ import * as teamService from "@/services/team.service"
 import { useAuth } from "@/context/AuthContext"
 import { useActiveBusiness } from "@/hooks/useActiveBusiness"
 import { countryNameToIso } from "@/lib/countries"
+import { copyTextToClipboard } from "@/lib/clipboard"
 import { ApiError } from "@/lib/api-client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -63,9 +64,18 @@ export function AddTeamMemberDialog() {
   const [open, setOpen] = useState(false)
   const [created, setCreated] = useState<{ username: string; password: string } | null>(null)
   const [copied, setCopied] = useState(false)
+  const copyTimeoutRef = useRef<number | null>(null)
   const { activeBusinessId } = useAuth()
   const activeBusiness = useActiveBusiness()
   const queryClient = useQueryClient()
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current !== null) {
+        window.clearTimeout(copyTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const {
     register,
@@ -99,6 +109,10 @@ export function AddTeamMemberDialog() {
   const handleOpenChange = (next: boolean) => {
     setOpen(next)
     if (!next) {
+      if (copyTimeoutRef.current !== null) {
+        window.clearTimeout(copyTimeoutRef.current)
+        copyTimeoutRef.current = null
+      }
       setCreated(null)
       setCopied(false)
     }
@@ -106,11 +120,23 @@ export function AddTeamMemberDialog() {
 
   // Copies the one-time temporary password to the clipboard and briefly shows a
   // checkmark (reverts to the copy icon after 2s) as feedback.
-  const copyPassword = async () => {
+  const copyPassword = async (trigger?: HTMLElement) => {
     if (!created) return
-    await navigator.clipboard.writeText(created.password)
+    const dialog = trigger?.closest<HTMLElement>('[role="dialog"], [data-slot="dialog-content"]')
+    const ok = await copyTextToClipboard(created.password, dialog)
+    if (!ok) {
+      toast.error(t("Could not copy password"))
+      return
+    }
+    if (copyTimeoutRef.current !== null) {
+      window.clearTimeout(copyTimeoutRef.current)
+    }
     setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    toast.success(t("Password copied"))
+    copyTimeoutRef.current = window.setTimeout(() => {
+      setCopied(false)
+      copyTimeoutRef.current = null
+    }, 2000)
   }
 
   return (
@@ -121,7 +147,7 @@ export function AddTeamMemberDialog() {
           {t("Add team member")}
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent onInteractOutside={(e) => { if (created) e.preventDefault() }}>
         {created ? (
           <>
             <DialogHeader>
@@ -137,13 +163,19 @@ export function AddTeamMemberDialog() {
             <div className="space-y-3 rounded-lg border border-border bg-muted/50 p-4">
               <div>
                 <p className="text-xs text-muted-foreground">{t("Username")}</p>
-                <p className="font-mono text-sm font-medium">{created.username}</p>
+                <p className="font-mono text-sm font-medium select-all">{created.username}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">{t("Temporary password")}</p>
                 <div className="flex items-center gap-2">
-                  <p className="font-mono text-sm font-medium">{created.password}</p>
-                  <Button type="button" variant="ghost" size="icon-sm" onClick={copyPassword} aria-label={t("Copy password")}>
+                  <p className="font-mono text-sm font-medium select-all break-all">{created.password}</p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={(e) => copyPassword(e.currentTarget)}
+                    aria-label={t("Copy password")}
+                  >
                     {copied ? <Check className="size-3.5 text-success" /> : <Copy className="size-3.5" />}
                   </Button>
                 </div>

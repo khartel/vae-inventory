@@ -25,6 +25,9 @@ export type AdjustmentReason = "DAMAGED" | "MISCOUNTED" | "THEFT" | "OTHER"
 // the change - see previousQuantity/newQuantity for direction).
 export interface StockMovement {
   id: string
+  /** Shared by product lines saved in one operation; absent on older records. */
+  batchId?: string | null
+  returnId?: string | null
   quantity: number
   unitLabel: string | null
   unitQuantity: number | null
@@ -48,6 +51,13 @@ export interface MoveStockInput {
   toWarehouseId: string
   productId: string
   quantity: number
+  notes?: string
+}
+
+export interface MoveStockBatchInput {
+  fromWarehouseId: string
+  toWarehouseId: string
+  items: Array<{ productId: string; quantity: number; unitLabel?: string; unitQuantity?: number }>
   notes?: string
 }
 
@@ -98,6 +108,12 @@ export const getStockMovements = (businessId: string, filters?: StockMovementFil
 /** Transfers a quantity of one product from one warehouse to another. */
 export const moveStock = (businessId: string, input: MoveStockInput) =>
   apiRequest<StockMovement>(apiClient.post(`/businesses/${businessId}/stock/move`, input))
+
+/** All product lines move together, or the entire operation is rolled back. */
+export const moveStockBatch = (businessId: string, input: MoveStockBatchInput) =>
+  apiRequest<{ batchId: string; movements: StockMovement[] }>(
+    apiClient.post(`/businesses/${businessId}/stock/move-bulk`, input)
+  )
 
 /** Receives (restocks) a batch of products into a single warehouse. */
 export const receiveStock = (businessId: string, input: ReceiveStockInput) =>

@@ -11,6 +11,7 @@ import * as warehouseService from "@/services/warehouse.service"
 import * as productService from "@/services/product.service"
 import { useAuth } from "@/context/AuthContext"
 import { ApiError } from "@/lib/api-client"
+import { invalidateStockQueries } from "@/lib/stock-movements"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -109,8 +110,7 @@ export function AdjustStockDialog() {
   const mutation = useMutation({
     mutationFn: (values: ParsedValues) => stockService.adjustStock(activeBusinessId!, values),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["stock-movements", activeBusinessId] })
-      queryClient.invalidateQueries({ queryKey: ["products", activeBusinessId] })
+      invalidateStockQueries(queryClient, activeBusinessId)
       toast.success(t("Stock adjusted"))
       setOpen(false)
       reset()
@@ -231,8 +231,8 @@ export function AdjustStockDialog() {
           </div>
 
           <DialogFooter>
-            <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting && <Loader2 className="size-4 animate-spin" />}
+            <Button type="submit" disabled={isSubmitting || mutation.isPending}>
+              {(isSubmitting || mutation.isPending) && <Loader2 className="size-4 animate-spin" />}
               {t("Adjust stock")}
             </Button>
           </DialogFooter>

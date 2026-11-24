@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { Check, Copy, History, KeyRound, Loader2, Search, ShieldAlert, Trash2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import * as platformService from "@/services/platform.service"
 import type { AuditLogEntry } from "@/services/auditLog.service"
+import { copyTextToClipboard } from "@/lib/clipboard"
 import { ApiError } from "@/lib/api-client"
 import { formatDate, formatDateTime } from "@/lib/format"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
@@ -112,6 +113,15 @@ function ResetPasswordAction({ masterKey, userId }: { masterKey: string; userId:
   const { t } = useTranslation()
   const [result, setResult] = useState<{ username: string; newPassword: string } | null>(null)
   const [copied, setCopied] = useState(false)
+  const copyTimeoutRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current !== null) {
+        window.clearTimeout(copyTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const mutation = useMutation({
     mutationFn: () => platformService.resetSuperAdminPassword(masterKey, userId),
@@ -119,18 +129,30 @@ function ResetPasswordAction({ masterKey, userId }: { masterKey: string; userId:
     onError: (error) => toast.error(error instanceof ApiError ? error.message : t("Could not reset password")),
   })
 
-  const copy = async () => {
+  const copy = async (trigger?: HTMLElement) => {
     if (!result) return
-    await navigator.clipboard.writeText(result.newPassword)
+    const dialog = trigger?.closest<HTMLElement>('[role="dialog"], [data-slot="dialog-content"]')
+    const ok = await copyTextToClipboard(result.newPassword, dialog)
+    if (!ok) {
+      toast.error(t("Could not copy password"))
+      return
+    }
+    if (copyTimeoutRef.current !== null) {
+      window.clearTimeout(copyTimeoutRef.current)
+    }
     setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    toast.success(t("Password copied"))
+    copyTimeoutRef.current = window.setTimeout(() => {
+      setCopied(false)
+      copyTimeoutRef.current = null
+    }, 2000)
   }
 
   if (result) {
     return (
       <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2 py-1 text-xs">
-        <span className="font-mono">{result.newPassword}</span>
-        <Button type="button" variant="ghost" size="icon-sm" onClick={copy} aria-label={t("Copy password")}>
+        <span className="font-mono select-all">{result.newPassword}</span>
+        <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => copy(e.currentTarget)} aria-label={t("Copy password")}>
           {copied ? <Check className="size-3.5 text-success" /> : <Copy className="size-3.5" />}
         </Button>
       </div>
@@ -238,7 +260,7 @@ function AdminConsole({ masterKey }: { masterKey: string }) {
     onError: (error) => toast.error(error instanceof ApiError ? error.message : t("Could not delete SuperAdmin")),
   })
 
-  const superAdmins = query.data ?? []
+  const superAdmins = useMemo(() => query.data ?? [], [query.data])
   // Client-side filter over the fetched SuperAdmin list, matching on name
   // or username (case-insensitive).
   const filteredSuperAdmins = useMemo(() => {

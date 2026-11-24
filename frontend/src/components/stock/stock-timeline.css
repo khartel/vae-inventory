@@ -1,0 +1,52 @@
+@import "../inventory/operations.css";
+
+.stock-activity-overview { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem 1.75rem; padding: 1rem 1.25rem; background: var(--card); border: 1px solid var(--border); border-radius: .625rem; }
+.stock-activity-overview > span { display: inline-flex; align-items: center; gap: .5rem; font-size: .875rem; }
+.stock-activity-overview svg { width: 1rem; height: 1rem; color: var(--primary); }
+.stock-activity-overview strong { font-weight: 600; font-variant-numeric: tabular-nums; }
+.stock-activity-overview > small { margin-left: auto; color: var(--muted-foreground); font-size: .75rem; }
+.stock-timeline-days { padding: .375rem 1.5rem 1.125rem; }
+.stock-timeline-date { padding: 1.25rem 0 .625rem; font-family: var(--font-sans); font-size: .75rem; font-weight: 500; color: var(--muted-foreground); }
+.stock-timeline-batch { --movement-color: var(--primary); --movement-surface: color-mix(in srgb, var(--primary) 10%, var(--card)); position: relative; }
+.stock-timeline-batch:not(:last-child)::before { content: ""; position: absolute; top: 3.5rem; bottom: -.75rem; left: 6.1875rem; width: 1px; background: var(--border); }
+.stock-timeline-restock,.stock-timeline-return { --movement-color: var(--success); --movement-surface: color-mix(in srgb, var(--success) 10%, var(--card)); }
+.stock-timeline-adjustment { --movement-color: #92671c; --movement-surface: #fff4df; }
+.dark .stock-timeline-adjustment { --movement-color: #e9c58a; --movement-surface: #443823; }
+.stock-timeline-summary { display: grid; grid-template-columns: 4rem 2.5rem minmax(0,1fr) auto; gap: 1rem; align-items: start; padding: 1rem 0; list-style: none; cursor: pointer; border-radius: .375rem; }
+.stock-timeline-summary::-webkit-details-marker { display: none; }
+.stock-timeline-summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 5px; }
+.stock-timeline-summary:hover .stock-timeline-route { color: var(--primary); }
+.stock-timeline-time { padding-top: .5rem; font-size: .75rem; color: var(--muted-foreground); }
+.stock-timeline-marker { display: grid; place-items: center; width: 2.5rem; height: 2.5rem; border-radius: .625rem; background: var(--movement-surface); color: var(--movement-color); position: relative; }
+.stock-timeline-copy { min-width: 0; padding-top: .125rem; }
+.stock-timeline-route { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; font-size: 1rem; font-weight: 500; overflow-wrap: anywhere; }
+.stock-timeline-route svg { flex-shrink: 0; color: var(--muted-foreground); }
+.stock-timeline-meta { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem .75rem; margin-top: .625rem; font-size: .75rem; color: var(--muted-foreground); }
+.stock-timeline-meta .stock-timeline-type { color: var(--movement-color); background: var(--movement-surface); border-radius: .375rem; }
+.stock-timeline-count { display: flex; align-items: center; gap: .75rem; padding-top: .5rem; font-size: .875rem; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.stock-timeline-chevron { color: var(--muted-foreground); transition: transform .15s; }
+.stock-timeline-batch[open] .stock-timeline-chevron { transform: rotate(180deg); }
+.stock-timeline-contents { position: relative; margin: .25rem 0 1rem 7.5rem; border: 1px solid var(--border); border-radius: .5rem; background: var(--background); overflow: hidden; }
+.stock-timeline-contents .operations-table td { background: var(--card); }
+.stock-timeline-note { padding: .875rem 1.25rem; font-size: .875rem; color: var(--muted-foreground); border-top: 1px solid var(--border); white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .stock-timeline-days { padding-inline: 1rem; }
+  .stock-timeline-summary { grid-template-columns: 2.25rem minmax(0,1fr) auto; gap: .75rem; }
+  .stock-timeline-time { grid-column: 2 / -1; padding: 0; }
+  .stock-timeline-marker { grid-row: 2; width: 2.25rem; height: 2.25rem; }
+  .stock-timeline-copy,.stock-timeline-count { grid-row: 2; }
+  .stock-timeline-count { gap: .25rem; font-size: .75rem; }
+  .stock-timeline-route { font-size: .875rem; }
+  .stock-timeline-batch:not(:last-child)::before { left: 1.0625rem; top: 4.75rem; }
+  .stock-timeline-contents { margin-left: 3rem; }
+  .stock-activity-overview { gap: .75rem 1.25rem; }
+  .stock-activity-overview > small { width: 100%; margin-left: 0; }
+}
+@media (max-width: 380px) {
+  .stock-timeline-summary { grid-template-columns: 2rem minmax(0,1fr); }
+  .stock-timeline-marker { width: 2rem; height: 2rem; }
+  .stock-timeline-count { grid-column: 2; grid-row: 3; padding-top: 0; justify-content: space-between; }
+  .stock-timeline-contents { margin-left: 0; }
+  .stock-timeline-batch:not(:last-child)::before { left: .9375rem; }
+}
+@media (prefers-reduced-motion: reduce) { .stock-timeline-chevron { transition: none; } }

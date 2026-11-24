@@ -101,7 +101,7 @@ export default function Team() {
     onError: (error) => toast.error(error instanceof ApiError ? error.message : t("Could not remove team member")),
   })
 
-  const members = teamQuery.data ?? []
+  const members = useMemo(() => teamQuery.data ?? [], [teamQuery.data])
   // Client-side filter over the fetched member list, matching on name,
   // username, or phone (case-insensitive).
   const filteredMembers = useMemo(() => {

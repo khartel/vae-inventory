@@ -1,9 +1,10 @@
-﻿import { useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { ArrowLeftRight, ClipboardEdit, PackagePlus, Undo2, X } from "lucide-react"
+import { ArrowLeftRight, Boxes, Package, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import * as stockService from "@/services/stock.service"
 import type { StockMovement } from "@/services/stock.service"
+import { ADJUSTMENT_REASON_LABELS, formatMovementQuantity, getMovementOriginLabel, groupMovementBatches } from "@/lib/stock-movements"
 import * as warehouseService from "@/services/warehouse.service"
 import { useAuth } from "@/context/AuthContext"
 import { useActiveBusiness, useActiveBusinessRole } from "@/hooks/useActiveBusiness"
@@ -14,10 +15,10 @@ import { downloadPdfReport } from "@/lib/pdf"
 import { PageHeader } from "@/components/PageHeader"
 import { EmptyState } from "@/components/EmptyState"
 import { ErrorState } from "@/components/ErrorState"
+import { StockMovementTimeline } from "@/components/stock/StockMovementTimeline"
 import { MoveStockDialog } from "@/components/stock/MoveStockDialog"
 import { AdjustStockDialog } from "@/components/stock/AdjustStockDialog"
 import { DownloadMenu } from "@/components/reports/DownloadMenu"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -28,101 +29,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-
 // Sentinel value for the "no filter selected" option in the warehouse/type
 // Select dropdowns (native <select> can't use an empty-string value cleanly).
 const ANY = "__any__"
 
-// Formats an ISO date string as a local time (e.g. "3:45 PM") for the
-// per-movement rows inside a day's detail sheet.
-function formatTime(date: string) {
-  return new Date(date).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+// Formats the local time shown alongside each movement date.
+function formatTime(date: string, locale?: string) {
+  return new Date(date).toLocaleTimeString(locale || undefined, { hour: "numeric", minute: "2-digit" })
 }
 
-// Small colored badge distinguishing the four movement types: RESTOCK
-// (incoming stock), TRANSFER (moved between warehouses), RETURN (restocked
-// from a reversed sale), and ADJUSTMENT (a cycle-count correction).
-function MovementTypeBadge({ type }: { type: StockMovement["type"] }) {
-  const { t } = useTranslation()
-  switch (type) {
-    case "RESTOCK":
-      return (
-        <Badge className="gap-1 bg-success/15 text-success">
-          <PackagePlus className="size-3" />
-          {t("Restock")}
-        </Badge>
-      )
-    case "RETURN":
-      return (
-        <Badge className="gap-1 bg-primary/10 text-primary">
-          <Undo2 className="size-3" />
-          {t("Return")}
-        </Badge>
-      )
-    case "ADJUSTMENT":
-      return (
-        <Badge className="gap-1 bg-destructive/10 text-destructive">
-          <ClipboardEdit className="size-3" />
-          {t("Adjustment")}
-        </Badge>
-      )
-    default:
-      return (
-        <Badge variant="secondary" className="gap-1">
-          <ArrowLeftRight className="size-3" />
-          {t("Transfer")}
-        </Badge>
-      )
-  }
-}
-
-// One row in the top-level table: all movements that happened on a given
-// calendar day, expandable into a detail sheet.
-interface DayGroup {
-  key: string
-  label: string
-  movements: StockMovement[]
-}
-
-/**
- * StockMovements page — audit log of stock restocks and inter-warehouse
- * transfers for the active business, grouped by day (each row expands into
- * a detail sheet listing that day's individual movements).
- *
- * Data: `["warehouses", activeBusinessId]` (for the from/to filter
- * dropdowns) and `["stock-movements", activeBusinessId, filters]` via
- * `stockService.getStockMovements`. `filters` (date range, from/to
- * warehouse, movement type) is derived from local state and included in
- * the query key, so changing any filter triggers a refetch.
- *
- * Interactions: filter controls (date range, warehouse, type) with a
- * "Clear filters" shortcut; `MoveStockDialog` for managers to record a new
- * transfer; CSV/PDF export of the currently filtered movements via
- * `DownloadMenu` (`downloadAsCsv/downloadAsPdf`, using `lib/csv.ts` and
- * `lib/pdf.ts`).
- */
+/** Activity timeline: one expandable entry per saved stock operation. */
 export default function StockMovements() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = i18n.language || undefined
   const { activeBusinessId } = useAuth()
   const activeBusiness = useActiveBusiness()
   const activeRole = useActiveBusinessRole()
   const canEdit = canManage(activeRole)
-  const [selectedDay, setSelectedDay] = useState<DayGroup | null>(null)
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
   const [fromWarehouseId, setFromWarehouseId] = useState(ANY)
@@ -160,24 +83,54 @@ export default function StockMovements() {
     enabled: !!activeBusinessId,
   })
 
-  const movements = movementsQuery.data ?? []
+  const movements = useMemo(() => movementsQuery.data ?? [], [movementsQuery.data])
+  const batches = useMemo(() => groupMovementBatches(movements), [movements])
 
   // Exports the currently filtered movements as a CSV file.
   const downloadAsCsv = () => {
     downloadCsv(`stock-movements-${new Date().toISOString().slice(0, 10)}.csv`, [
-      ["Date", "Time", "Type", "Product", "From", "To", "Quantity", "Unit", "Moved by", "Notes"],
-      ...movements.map((m) => [
-        formatDate(m.createdAt),
-        formatTime(m.createdAt),
-        m.type,
-        m.product.name,
-        m.fromWarehouse?.name ?? "External",
-        m.toWarehouse.name,
-        m.quantity,
-        m.product.unit,
-        m.movedBy.fullName,
-        m.notes ?? "",
-      ]),
+      [
+        t("Batch reference"),
+        t("Date"),
+        t("Time"),
+        t("Type"),
+        t("Product"),
+        t("From"),
+        t("To"),
+        t("Quantity"),
+        t("Unit"),
+        t("Previous quantity"),
+        t("New quantity"),
+        t("Delta"),
+        t("Reason"),
+        t("Moved by"),
+        t("Notes"),
+      ],
+      ...movements.map((m) => {
+        const delta =
+          m.type === "ADJUSTMENT" && m.previousQuantity != null && m.newQuantity != null
+            ? m.newQuantity - m.previousQuantity
+            : ""
+        const reason = m.adjustmentReason ? t(ADJUSTMENT_REASON_LABELS[m.adjustmentReason]) : ""
+        const origin = m.fromWarehouse?.name ?? (m.type === "ADJUSTMENT" ? "—" : t(getMovementOriginLabel(m)))
+        return [
+          m.batchId ?? m.returnId ?? m.id,
+          formatDate(m.createdAt, locale),
+          formatTime(m.createdAt, locale),
+          m.type,
+          m.product.name,
+          origin,
+          m.toWarehouse.name,
+          m.quantity,
+          m.product.unit,
+          m.previousQuantity ?? "",
+          m.newQuantity ?? "",
+          delta,
+          reason,
+          m.movedBy.fullName,
+          m.notes ?? "",
+        ]
+      }),
     ])
   }
 
@@ -186,42 +139,33 @@ export default function StockMovements() {
     downloadPdfReport(`stock-movements-${new Date().toISOString().slice(0, 10)}.pdf`, {
       businessName: activeBusiness?.name ?? "",
       businessLocation: activeBusiness?.location,
-      title: "STOCK MOVEMENTS",
-      dateLine: hasActiveFilters ? "Filtered" : "All movements",
+      title: t("STOCK MOVEMENTS"),
+      dateLine: hasActiveFilters ? t("Filtered") : t("All movements"),
       sections: [
         {
-          head: ["Date", "Time", "Type", "Product", "From", "To", "Qty", "By"],
-          body: movements.map((m) => [
-            formatDate(m.createdAt),
-            formatTime(m.createdAt),
-            m.type,
-            m.product.name,
-            m.fromWarehouse?.name ?? "External",
-            m.toWarehouse.name,
-            m.unitQuantity != null && m.unitLabel ? `${m.unitQuantity} ${m.unitLabel}` : `${m.quantity} ${m.product.unit}`,
-            m.movedBy.fullName,
-          ]),
+          head: [t("Batch"), t("Date"), t("Time"), t("Type"), t("Product"), t("From"), t("To"), t("Qty"), t("By")],
+          body: movements.map((m) => {
+            const origin = m.fromWarehouse?.name ?? (m.type === "ADJUSTMENT" ? "—" : t(getMovementOriginLabel(m)))
+            const productLabel = m.adjustmentReason
+              ? `${m.product.name} (${t(ADJUSTMENT_REASON_LABELS[m.adjustmentReason])})`
+              : m.product.name
+            return [
+              (m.batchId ?? m.returnId ?? m.id).slice(0, 8),
+              formatDate(m.createdAt, locale),
+              formatTime(m.createdAt, locale),
+              m.type,
+              productLabel,
+              origin,
+              m.toWarehouse.name,
+              formatMovementQuantity(m),
+              m.movedBy.fullName,
+            ]
+          }),
         },
       ],
-      footerNote: "Generated by VAE Inventory",
+      footerNote: t("Generated by VAE Inventory"),
     })
   }
-
-  // Buckets the flat movements list into one DayGroup per calendar day
-  // (used to render the collapsed day-by-day table).
-  const dayGroups = useMemo(() => {
-    const groups = new Map<string, DayGroup>()
-    for (const movement of movements) {
-      const key = new Date(movement.createdAt).toDateString()
-      const existing = groups.get(key)
-      if (existing) {
-        existing.movements.push(movement)
-      } else {
-        groups.set(key, { key, label: formatDate(movement.createdAt), movements: [movement] })
-      }
-    }
-    return Array.from(groups.values())
-  }, [movements])
 
   if (!activeBusinessId) {
     return (
@@ -233,174 +177,123 @@ export default function StockMovements() {
     )
   }
 
+  const summaryUnavailable = movementsQuery.isError
+
   return (
-    <div className="space-y-6">
-      <PageHeader
-        action={
-          canEdit && (
-            <div className="flex gap-2">
+    <div className="operations-page">
+      <header>
+        <p className="operations-eyebrow">{t("Inventory management")}</p>
+        <PageHeader
+          title="Stock Movements"
+          description="Follow your stock activity. Open a movement to see everything inside."
+          action={canEdit && (
+            <div className="flex flex-wrap gap-2">
               <AdjustStockDialog />
               <MoveStockDialog />
             </div>
-          )
-        }
-      />
+          )}
+        />
+      </header>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          type="date"
-          value={startDate}
-          onChange={(e) => setStartDate(e.target.value)}
-          className="w-auto"
-          aria-label={t("From date")}
-        />
-        <span className="text-xs text-muted-foreground">{t("to")}</span>
-        <Input
-          type="date"
-          value={endDate}
-          onChange={(e) => setEndDate(e.target.value)}
-          className="w-auto"
-          aria-label={t("To date")}
-        />
-        <Select value={fromWarehouseId} onValueChange={setFromWarehouseId}>
-          <SelectTrigger className="w-40" aria-label={t("From warehouse")}>
-            <SelectValue placeholder={t("From warehouse")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ANY}>{t("Any source")}</SelectItem>
-            {warehouses.map((w) => (
-              <SelectItem key={w.id} value={w.id}>
-                {w.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={toWarehouseId} onValueChange={setToWarehouseId}>
-          <SelectTrigger className="w-40" aria-label={t("To warehouse")}>
-            <SelectValue placeholder={t("To warehouse")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ANY}>{t("Any destination")}</SelectItem>
-            {warehouses.map((w) => (
-              <SelectItem key={w.id} value={w.id}>
-                {w.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={type} onValueChange={setType}>
-          <SelectTrigger className="w-36" aria-label={t("Movement type")}>
-            <SelectValue placeholder={t("Type")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ANY}>{t("Any type")}</SelectItem>
-            <SelectItem value="RESTOCK">{t("Restock")}</SelectItem>
-            <SelectItem value="TRANSFER">{t("Transfer")}</SelectItem>
-            <SelectItem value="RETURN">{t("Return")}</SelectItem>
-            <SelectItem value="ADJUSTMENT">{t("Adjustment")}</SelectItem>
-          </SelectContent>
-        </Select>
-        {hasActiveFilters && (
-          <Button variant="ghost" size="sm" onClick={clearFilters}>
-            <X className="size-3.5" />
-            {t("Clear filters")}
-          </Button>
-        )}
-        <DownloadMenu
-          className="ml-auto"
-          disabled={movements.length === 0}
-          groups={[{ items: [{ label: t("CSV"), onClick: downloadAsCsv }, { label: t("PDF"), onClick: downloadAsPdf }] }]}
-        />
+      <div className="stock-activity-overview" aria-busy={movementsQuery.isLoading}>
+        <span><Boxes aria-hidden="true" /><strong>{movementsQuery.isLoading || summaryUnavailable ? "—" : batches.length.toLocaleString()}</strong>{t("Movement batches")}</span>
+        <span><Package aria-hidden="true" /><strong>{movementsQuery.isLoading || summaryUnavailable ? "—" : movements.length.toLocaleString()}</strong>{t("Product lines")}</span>
+        <span><ArrowLeftRight aria-hidden="true" /><strong>{movementsQuery.isLoading || summaryUnavailable ? "—" : batches.filter((batch) => batch.movement.type === "TRANSFER").length.toLocaleString()}</strong>{t("Transfers")}</span>
+        <small>{t(hasActiveFilters ? "Matching current filters" : "All recorded movements")}</small>
       </div>
 
+      <section className="operations-filters" aria-label={t("Movement filters")}>
+        <div className="operations-filter">
+          <label htmlFor="movement-start-date">{t("From date")}</label>
+          <Input
+            id="movement-start-date"
+            type="date"
+            value={startDate}
+            onChange={(event) => setStartDate(event.target.value)}
+          />
+        </div>
+        <div className="operations-filter">
+          <label htmlFor="movement-end-date">{t("To date")}</label>
+          <Input
+            id="movement-end-date"
+            type="date"
+            value={endDate}
+            onChange={(event) => setEndDate(event.target.value)}
+          />
+        </div>
+        <div className="operations-filter">
+          <label htmlFor="movement-source">{t("From warehouse")}</label>
+          <Select value={fromWarehouseId} onValueChange={setFromWarehouseId}>
+            <SelectTrigger id="movement-source" aria-label={t("From warehouse")}>
+              <SelectValue placeholder={t("From warehouse")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ANY}>{t("Any source")}</SelectItem>
+              {warehouses.map((warehouse) => (
+                <SelectItem key={warehouse.id} value={warehouse.id}>{warehouse.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="operations-filter">
+          <label htmlFor="movement-destination">{t("To warehouse")}</label>
+          <Select value={toWarehouseId} onValueChange={setToWarehouseId}>
+            <SelectTrigger id="movement-destination" aria-label={t("To warehouse")}>
+              <SelectValue placeholder={t("To warehouse")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ANY}>{t("Any destination")}</SelectItem>
+              {warehouses.map((warehouse) => (
+                <SelectItem key={warehouse.id} value={warehouse.id}>{warehouse.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="operations-filter">
+          <label htmlFor="movement-type">{t("Movement type")}</label>
+          <Select value={type} onValueChange={setType}>
+            <SelectTrigger id="movement-type" aria-label={t("Movement type")}>
+              <SelectValue placeholder={t("Type")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ANY}>{t("Any type")}</SelectItem>
+              <SelectItem value="RESTOCK">{t("Restock")}</SelectItem>
+              <SelectItem value="TRANSFER">{t("Transfer")}</SelectItem>
+              <SelectItem value="RETURN">{t("Return")}</SelectItem>
+              <SelectItem value="ADJUSTMENT">{t("Adjustment")}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="operations-filter-actions">
+          {hasActiveFilters && (
+            <Button variant="ghost" size="sm" onClick={clearFilters}>
+              <X className="size-3.5" aria-hidden="true" />
+              {t("Clear filters")}
+            </Button>
+          )}
+          <DownloadMenu
+            disabled={movementsQuery.isLoading || movementsQuery.isError || movements.length === 0}
+            groups={[{ items: [{ label: t("CSV"), onClick: downloadAsCsv }, { label: t("PDF"), onClick: downloadAsPdf }] }]}
+          />
+        </div>
+      </section>
+
       {movementsQuery.isLoading ? (
-        <Skeleton className="h-64 rounded-xl" />
+        <Skeleton className="h-64 rounded-lg" />
       ) : movementsQuery.isError ? (
         <ErrorState onRetry={() => movementsQuery.refetch()} />
-      ) : dayGroups.length === 0 ? (
+      ) : movements.length === 0 ? (
         <EmptyState
           icon={<ArrowLeftRight className="size-6" />}
           title={hasActiveFilters ? "No movements match your filters" : "No stock movements yet"}
-          description={
-            hasActiveFilters
-              ? "Try widening the date range or clearing a filter."
-              : "Restocks and transfers between warehouses will show up here."
+          description={hasActiveFilters
+            ? "Try widening the date range or clearing a filter."
+            : "Restocks and transfers between warehouses will show up here."
           }
         />
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t("Date")}</TableHead>
-                <TableHead className="text-right">{t("Movements")}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {dayGroups.map((group) => (
-                <TableRow key={group.key} className="cursor-pointer" onClick={() => setSelectedDay(group)}>
-                  <TableCell className="font-medium">{group.label}</TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    {group.movements.length} {group.movements.length === 1 ? t("movement") : t("movements")}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+        <StockMovementTimeline batches={batches} />
       )}
-
-      <Dialog open={!!selectedDay} onOpenChange={(open) => !open && setSelectedDay(null)}>
-        <DialogContent className="sm:max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>{selectedDay?.label}</DialogTitle>
-            <DialogDescription>
-              {selectedDay?.movements.length}{" "}
-              {(selectedDay?.movements.length ?? 0) === 1 ? t("movement") : t("movements")}{" "}
-              {t("that day")}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto rounded-lg border border-border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t("Time")}</TableHead>
-                  <TableHead>{t("Type")}</TableHead>
-                  <TableHead>{t("Product")}</TableHead>
-                  <TableHead>{t("Route")}</TableHead>
-                  <TableHead>{t("Quantity")}</TableHead>
-                  <TableHead>{t("By")}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {selectedDay?.movements.map((movement) => (
-                  <TableRow key={movement.id}>
-                    <TableCell className="text-muted-foreground">{formatTime(movement.createdAt)}</TableCell>
-                    <TableCell>
-                      <MovementTypeBadge type={movement.type} />
-                    </TableCell>
-                    <TableCell className="font-medium">{movement.product.name}</TableCell>
-                    <TableCell className="text-muted-foreground whitespace-nowrap">
-                      {movement.type === "ADJUSTMENT"
-                        ? movement.toWarehouse.name
-                        : `${movement.fromWarehouse?.name ?? t("External")} → ${movement.toWarehouse.name}`}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      {movement.type === "ADJUSTMENT" && movement.previousQuantity != null && movement.newQuantity != null
-                        ? `${movement.previousQuantity} → ${movement.newQuantity} ${movement.product.unit}`
-                        : movement.unitQuantity != null && movement.unitLabel
-                          ? `${movement.unitQuantity} ${movement.unitLabel}`
-                          : `${movement.quantity} ${movement.product.unit}`}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{movement.movedBy.fullName}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

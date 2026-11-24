@@ -22,6 +22,8 @@
   "New temporary password": "Nouveau mot de passe temporaire",
   "Temporary password": "Mot de passe temporaire",
   "Copy password": "Copier le mot de passe",
+  "Password copied": "Mot de passe copié",
+  "Could not copy password": "Impossible de copier le mot de passe",
   "Tap to enter": "Appuyez pour saisir",
   "{{name}} added to the business": "{{name}} ajouté(e) à l'entreprise",
   "They'll get a temporary password to log in with. Existing users can be added directly by username.": "Il/elle recevra un mot de passe temporaire pour se connecter. Les utilisateurs existants peuvent être ajoutés directement par leur nom d'utilisateur.",

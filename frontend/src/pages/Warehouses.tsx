@@ -11,6 +11,7 @@ import { ApiError } from "@/lib/api-client"
 import { PageHeader } from "@/components/PageHeader"
 import { EmptyState } from "@/components/EmptyState"
 import { ErrorState } from "@/components/ErrorState"
+import { OperationsSummary } from "@/components/inventory/OperationsSummary"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { WarehouseFormDialog } from "@/components/warehouses/WarehouseFormDialog"
 import { WarehouseDetailSheet } from "@/components/warehouses/WarehouseDetailSheet"
@@ -86,10 +87,28 @@ export default function Warehouses() {
   }
 
   const warehouses = warehousesQuery.data ?? []
+  const primaryWarehouse = warehouses.find((warehouse) => warehouse.isPrimary)
+  const summaryUnavailable = warehousesQuery.isError
 
   return (
-    <div className="space-y-6">
-      <PageHeader action={canEdit && <WarehouseFormDialog />} />
+    <div className="operations-page">
+      <header>
+        <p className="operations-eyebrow">{t("Inventory management")}</p>
+        <PageHeader
+          title="Warehouses"
+          description="A clearer view of where your stock lives."
+          action={canEdit && <WarehouseFormDialog />}
+        />
+      </header>
+
+      <OperationsSummary
+        loading={warehousesQuery.isLoading}
+        items={[
+          { label: "Warehouses", value: summaryUnavailable ? "—" : warehouses.length.toLocaleString(), description: "Storage locations for this business" },
+          { label: "Primary location", value: <span className="operations-stat-name">{summaryUnavailable ? "—" : primaryWarehouse?.name ?? t("Not set")}</span>, description: "Default stock location" },
+          { label: "Stock records", value: summaryUnavailable ? "—" : warehouses.reduce((sum, warehouse) => sum + (warehouse._count?.stock ?? 0), 0).toLocaleString(), description: "Product entries across locations" },
+        ]}
+      />
 
       {warehousesQuery.isLoading ? (
         <Skeleton className="h-64 rounded-xl" />
@@ -102,13 +121,17 @@ export default function Warehouses() {
           description="Create your first warehouse to start adding stock."
         />
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-border">
-          <Table>
+        <section className="operations-panel" aria-labelledby="warehouse-list-heading">
+          <div className="operations-panel-header">
+            <h2 id="warehouse-list-heading">{t("All locations")}</h2>
+            <span>{t(warehouses.length === 1 ? "{{count}} warehouse" : "{{count}} warehouses", { count: warehouses.length })}</span>
+          </div>
+          <Table className="operations-table">
             <TableHeader>
               <TableRow>
-                <TableHead>{t("Name")}</TableHead>
+                <TableHead>{t("Warehouse")}</TableHead>
                 <TableHead>{t("Location")}</TableHead>
-                <TableHead>{t("Products in stock")}</TableHead>
+                <TableHead className="text-right">{t("Products in stock")}</TableHead>
                 <TableHead className="text-right">{t("Actions")}</TableHead>
               </TableRow>
             </TableHeader>
@@ -119,19 +142,30 @@ export default function Warehouses() {
                   className="cursor-pointer"
                   onClick={() => setSelectedWarehouseId(warehouse.id)}
                 >
-                  <TableCell className="font-medium">
-                    <div className="flex items-center gap-2">
-                      {warehouse.name}
-                      {warehouse.isPrimary && (
-                        <Badge variant="secondary" className="gap-1">
-                          <Star className="size-3 fill-current" />
-                          {t("Primary")}
-                        </Badge>
-                      )}
+                  <TableCell className="operations-name">
+                    <div className="flex items-center gap-3">
+                      <span className="operations-warehouse-icon"><WarehouseIcon className="size-4" aria-hidden="true" /></span>
+                      <div>
+                        <button
+                          type="button"
+                          className="operations-warehouse-link"
+                          onClick={(event) => { event.stopPropagation(); setSelectedWarehouseId(warehouse.id) }}
+                        >
+                          {warehouse.name}
+                        </button>
+                        <div className="mt-1.5">
+                          {warehouse.isPrimary ? (
+                            <Badge className="operations-primary">
+                              <Star className="size-3" aria-hidden="true" />
+                              {t("Primary")}
+                            </Badge>
+                          ) : <span className="text-xs text-muted-foreground">{t("Storage location")}</span>}
+                        </div>
+                      </div>
                     </div>
                   </TableCell>
                   <TableCell className="text-muted-foreground">{warehouse.location || "—"}</TableCell>
-                  <TableCell className="text-muted-foreground">{warehouse._count?.stock ?? 0}</TableCell>
+                  <TableCell className="operations-number">{(warehouse._count?.stock ?? 0).toLocaleString()}</TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     {canEdit && (
                       <div className="flex justify-end gap-2">
@@ -165,7 +199,8 @@ export default function Warehouses() {
               ))}
             </TableBody>
           </Table>
-        </div>
+          <p className="operations-panel-footer">{t("Select a warehouse to view its stock.")}</p>
+        </section>
       )}
 
       <WarehouseDetailSheet

@@ -1,10 +1,11 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Check, Copy, KeyRound, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { useTranslation } from "react-i18next"
 import * as teamService from "@/services/team.service"
 import { useAuth } from "@/context/AuthContext"
+import { copyTextToClipboard } from "@/lib/clipboard"
 import { ApiError } from "@/lib/api-client"
 import { Button } from "@/components/ui/button"
 import {
@@ -43,8 +44,17 @@ export function ResetPasswordDialog({
   const [open, setOpen] = useState(false)
   const [result, setResult] = useState<{ username: string; newPassword: string } | null>(null)
   const [copied, setCopied] = useState(false)
+  const copyTimeoutRef = useRef<number | null>(null)
   const { activeBusinessId } = useAuth()
   const queryClient = useQueryClient()
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current !== null) {
+        window.clearTimeout(copyTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const mutation = useMutation({
     mutationFn: () => teamService.resetTeamMemberPassword(activeBusinessId!, businessUserId),
@@ -60,6 +70,10 @@ export function ResetPasswordDialog({
   const handleOpenChange = (next: boolean) => {
     setOpen(next)
     if (!next) {
+      if (copyTimeoutRef.current !== null) {
+        window.clearTimeout(copyTimeoutRef.current)
+        copyTimeoutRef.current = null
+      }
       setResult(null)
       setCopied(false)
     }
@@ -67,11 +81,23 @@ export function ResetPasswordDialog({
 
   // Copies the one-time new password to the clipboard and briefly shows a checkmark
   // (reverts to the copy icon after 2s) as feedback.
-  const copyPassword = async () => {
+  const copyPassword = async (trigger?: HTMLElement) => {
     if (!result) return
-    await navigator.clipboard.writeText(result.newPassword)
+    const dialog = trigger?.closest<HTMLElement>('[role="dialog"], [data-slot="dialog-content"]')
+    const ok = await copyTextToClipboard(result.newPassword, dialog)
+    if (!ok) {
+      toast.error(t("Could not copy password"))
+      return
+    }
+    if (copyTimeoutRef.current !== null) {
+      window.clearTimeout(copyTimeoutRef.current)
+    }
     setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    toast.success(t("Password copied"))
+    copyTimeoutRef.current = window.setTimeout(() => {
+      setCopied(false)
+      copyTimeoutRef.current = null
+    }, 2000)
   }
 
   return (
@@ -81,7 +107,7 @@ export function ResetPasswordDialog({
           <KeyRound className="size-3.5" />
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent onInteractOutside={(e) => { if (result) e.preventDefault() }}>
         {result ? (
           <>
             <DialogHeader>
@@ -97,13 +123,19 @@ export function ResetPasswordDialog({
             <div className="space-y-3 rounded-lg border border-border bg-muted/50 p-4">
               <div>
                 <p className="text-xs text-muted-foreground">{t("Username")}</p>
-                <p className="font-mono text-sm font-medium">{result.username}</p>
+                <p className="font-mono text-sm font-medium select-all">{result.username}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">{t("New temporary password")}</p>
                 <div className="flex items-center gap-2">
-                  <p className="font-mono text-sm font-medium">{result.newPassword}</p>
-                  <Button type="button" variant="ghost" size="icon-sm" onClick={copyPassword} aria-label={t("Copy password")}>
+                  <p className="font-mono text-sm font-medium select-all break-all">{result.newPassword}</p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={(e) => copyPassword(e.currentTarget)}
+                    aria-label={t("Copy password")}
+                  >
                     {copied ? <Check className="size-3.5 text-success" /> : <Copy className="size-3.5" />}
                   </Button>
                 </div>
