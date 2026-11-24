@@ -2,6 +2,7 @@ const prisma = require("../utils/prisma");
 const AppError = require("../utils/AppError");
 const { recordAudit } = require("../utils/auditLog");
 const { computeCreditStats } = require("../utils/creditBalance");
+const { withTransactionCostVisibility } = require("../utils/transactionResponse");
 
 /**
  * Derives a customer's summary stats from their loaded transaction history:
@@ -91,10 +92,11 @@ const getCustomers = async (businessId, { search, limit } = {}) => {
  *
  * @param {string} customerId
  * @param {string} businessId - Scopes the lookup to this business.
+ * @param {{includeCostPrice?: boolean}} [options] - Manager-only response option for nested sale items.
  * @returns {Promise<object>} Customer with stats and a `transactions` array.
  * @throws {AppError} 404 if not found in this business.
  */
-const getCustomerById = async (customerId, businessId) => {
+const getCustomerById = async (customerId, businessId, options = {}) => {
   const customer = await prisma.customer.findFirst({
     where: { id: customerId, businessId, deletedAt: null },
     include: {
@@ -121,7 +123,7 @@ const getCustomerById = async (customerId, businessId) => {
 
   const transactionsWithBalance = customer.transactions.map((t) => {
     const { amountPaid, balanceDue } = computeCreditStats(t);
-    return { ...t, amountPaid, balanceDue };
+    return withTransactionCostVisibility({ ...t, amountPaid, balanceDue }, options);
   });
 
   return { ...withStats(customer), transactions: transactionsWithBalance };
@@ -220,7 +222,7 @@ const getDeletedCustomers = async (businessId) => {
  * @returns {Promise<object>} The restored customer, with refreshed stats.
  * @throws {AppError} 404 if not found among this business's deleted customers.
  */
-const restoreCustomer = async (customerId, businessId, actorId) => {
+const restoreCustomer = async (customerId, businessId, actorId, options = {}) => {
   const customer = await prisma.customer.findFirst({
     where: { id: customerId, businessId, deletedAt: { not: null } },
   });
@@ -248,7 +250,7 @@ const restoreCustomer = async (customerId, businessId, actorId) => {
     });
   });
 
-  return getCustomerById(customerId, businessId);
+  return getCustomerById(customerId, businessId, options);
 };
 
 /**
@@ -271,7 +273,7 @@ const restoreCustomer = async (customerId, businessId, actorId) => {
  * @returns {Promise<object>} The surviving customer, with refreshed stats.
  * @throws {AppError} 404 if either customer isn't found; 400 if they're the same customer.
  */
-const mergeCustomers = async (duplicateId, intoId, businessId, actorId) => {
+const mergeCustomers = async (duplicateId, intoId, businessId, actorId, options = {}) => {
   if (duplicateId === intoId) {
     throw new AppError("Can't merge a customer into itself", 400);
   }
@@ -312,7 +314,7 @@ const mergeCustomers = async (duplicateId, intoId, businessId, actorId) => {
     });
   });
 
-  return getCustomerById(intoId, businessId);
+  return getCustomerById(intoId, businessId, options);
 };
 
 module.exports = {

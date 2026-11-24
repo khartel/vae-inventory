@@ -3,6 +3,17 @@ const AppError = require("../utils/AppError");
 const { recordAudit } = require("../utils/auditLog");
 const { getThresholdSettings, resolveLowStockThreshold } = require("../utils/lowStockThreshold");
 
+// A business exists before its first warehouse, so it is the stable lock target
+// for both first-location creation and primary-location changes. NO KEY UPDATE
+// still serializes these writers but permits business FK checks from stock
+// audits while deletion waits for a stock writer's Warehouse lock.
+const lockBusiness = async (tx, businessId) => {
+  const rows = await tx.$queryRaw`
+    SELECT id FROM "Business" WHERE id = ${businessId} FOR NO KEY UPDATE
+  `;
+  if (!rows.length) throw new AppError("Business not found", 404);
+};
+
 /**
  * Create a new warehouse for a business. Enforces the invariant that a
  * business has exactly one primary warehouse at a time (the one sales are
@@ -22,16 +33,8 @@ const { getThresholdSettings, resolveLowStockThreshold } = require("../utils/low
  * @throws {AppError} 404 if the business doesn't exist.
  */
 const createWarehouse = async ({ businessId, name, location, isPrimary, userId }) => {
-  // Check if business exists and user has access
-  const business = await prisma.business.findFirst({
-    where: { id: businessId },
-  });
-
-  if (!business) {
-    throw new AppError("Business not found", 404);
-  }
-
   const warehouse = await prisma.$transaction(async (tx) => {
+    await lockBusiness(tx, businessId);
     // If this warehouse is set as primary, demote all others atomically
     if (isPrimary) {
       await tx.warehouse.updateMany({
@@ -185,18 +188,15 @@ const getWarehouseById = async (warehouseId, businessId) => {
  * @throws {AppError} 404 if not found in this business.
  */
 const setPrimaryWarehouse = async (warehouseId, businessId) => {
-  // Make sure warehouse belongs to this business
-  const warehouse = await prisma.warehouse.findFirst({
-    where: { id: warehouseId, businessId, deletedAt: null },
-  });
-
-  if (!warehouse) {
-    throw new AppError("Warehouse not found", 404);
-  }
-
   // Demote all warehouses and promote this one atomically so the business is
   // never momentarily left without a primary warehouse.
   const updated = await prisma.$transaction(async (tx) => {
+    await lockBusiness(tx, businessId);
+    const warehouse = await tx.warehouse.findFirst({
+      where: { id: warehouseId, businessId, deletedAt: null },
+    });
+    if (!warehouse) throw new AppError("Warehouse not found", 404);
+
     await tx.warehouse.updateMany({
       where: { businessId },
       data: { isPrimary: false },
@@ -259,35 +259,33 @@ const updateWarehouse = async (warehouseId, businessId, { name, location }) => {
  * @throws {AppError} 404 if not found; error if it's primary or still has stock.
  */
 const deleteWarehouse = async (warehouseId, businessId, actorId) => {
-  const warehouse = await prisma.warehouse.findFirst({
-    where: { id: warehouseId, businessId, deletedAt: null },
-  });
-
-  if (!warehouse) {
-    throw new AppError("Warehouse not found", 404);
-  }
-
-  if (warehouse.isPrimary) {
-    throw new AppError(
-      "Cannot delete the primary warehouse. Set another warehouse as primary first."
-    );
-  }
-
-  // Check if warehouse has any stock currently held (not just a
-  // WarehouseStock row that was created once and later drawn down to 0).
-  const stockCount = await prisma.warehouseStock.count({
-    where: { warehouseId, quantity: { gt: 0 } },
-  });
-
-  if (stockCount > 0) {
-    throw new AppError(
-      "Cannot delete a warehouse that has stock. Move stock to another warehouse first."
-    );
-  }
-
   const actor = await prisma.user.findUnique({ where: { id: actorId } });
 
   await prisma.$transaction(async (tx) => {
+    await lockBusiness(tx, businessId);
+    // Incoming-stock writers hold FOR NO KEY UPDATE on this same row. Take
+    // the deletion lock before reading state/counts so either their committed
+    // stock is visible here or they see deletedAt after this transaction.
+    await tx.$queryRaw`
+      SELECT id FROM "Warehouse"
+      WHERE id = ${warehouseId} AND "businessId" = ${businessId}
+      FOR UPDATE
+    `;
+    const warehouse = await tx.warehouse.findFirst({
+      where: { id: warehouseId, businessId, deletedAt: null },
+    });
+    if (!warehouse) throw new AppError("Warehouse not found", 404);
+    if (warehouse.isPrimary) {
+      throw new AppError("Cannot delete the primary warehouse. Set another warehouse as primary first.");
+    }
+
+    const stockCount = await tx.warehouseStock.count({
+      where: { warehouseId, quantity: { gt: 0 } },
+    });
+    if (stockCount > 0) {
+      throw new AppError("Cannot delete a warehouse that has stock. Move stock to another warehouse first.");
+    }
+
     await tx.warehouse.update({
       where: { id: warehouseId },
       data: { deletedAt: new Date() },

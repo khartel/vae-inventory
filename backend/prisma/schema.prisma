@@ -372,6 +372,8 @@ model ReturnItem {
 model StockMovement {
   id              String         @id @default(uuid())
   businessId      String
+  // One operation can contain many product lines. Legacy rows may be unbatched.
+  batchId         String?
   fromWarehouseId String?
   // For ADJUSTMENT movements, this is "the warehouse being corrected", not
   // a literal transfer destination - direction is read from
@@ -404,6 +406,8 @@ model StockMovement {
   toWarehouse   Warehouse  @relation("MovementTo", fields: [toWarehouseId], references: [id], onDelete: Cascade)
   product       Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
   return        Return?    @relation(fields: [returnId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, batchId])
 }
 
 // ─────────────────────────────────────────

@@ -164,6 +164,7 @@ const issueSession = (user, rememberMe) => {
       username: user.username,
       role: user.role,
       tokenVersion: user.tokenVersion,
+      tokenType: "session",
     },
     rememberMe
   );
@@ -478,12 +479,21 @@ const setupTwoFactor = async (userId) => {
     throw new AppError("User not found", 404);
   }
 
+  const alreadyEnabled = () => new AppError(
+    "Two-factor authentication is already enabled. Disable it before starting setup again.",
+    409
+  );
+  if (user.twoFactorEnabled) throw alreadyEnabled();
+
   const secret = generateSecret();
 
-  await prisma.user.update({
-    where: { id: userId },
+  // A concurrent verification may enable 2FA after the lookup above. Never
+  // replace an enabled secret, even when that verification wins the race.
+  const updated = await prisma.user.updateMany({
+    where: { id: userId, twoFactorEnabled: false },
     data: { twoFactorSecret: secret, twoFactorEnabled: false },
   });
+  if (!updated.count) throw alreadyEnabled();
 
   const otpauthUrl = generateURI({ issuer: "VAE Inventory", label: user.username, secret });
   const qrCodeDataUrl = await QRCode.toDataURL(otpauthUrl);

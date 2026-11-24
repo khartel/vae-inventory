@@ -9,6 +9,9 @@ const {
 } = require("../services/transaction.service");
 const { sendSuccess } = require("../utils/response.utils");
 const asyncHandler = require("../utils/asyncHandler");
+const { canViewCostPrice } = require("../utils/transactionResponse");
+
+const costOptions = (req) => ({ includeCostPrice: canViewCostPrice(req.businessRole) });
 
 /**
  * POST /api/businesses/:businessId/transactions
@@ -26,7 +29,7 @@ const create = asyncHandler(async (req, res) => {
     items,
     notes,
     amountTendered,
-  });
+  }, costOptions(req));
 
   return sendSuccess(res, {
     message: "Sale recorded successfully",
@@ -59,7 +62,7 @@ const getAll = asyncHandler(async (req, res) => {
     endDate,
     page: page || 1,
     limit: limit || 20,
-  });
+  }, costOptions(req));
 
   return sendSuccess(res, {
     message: "Transactions fetched successfully",
@@ -87,7 +90,8 @@ const getSummary = asyncHandler(async (req, res) => {
 const getOne = asyncHandler(async (req, res) => {
   const transaction = await getTransactionById(
     req.params.transactionId,
-    req.params.businessId
+    req.params.businessId,
+    costOptions(req)
   );
 
   return sendSuccess(res, {
@@ -106,7 +110,8 @@ const recordPayment = asyncHandler(async (req, res) => {
   const transaction = await recordCreditPayment(
     req.params.transactionId,
     req.params.businessId,
-    { amount, recordedById: req.user.id }
+    { amount, recordedById: req.user.id },
+    costOptions(req)
   );
 
   return sendSuccess(res, {
@@ -127,7 +132,8 @@ const undoPayment = asyncHandler(async (req, res) => {
     req.params.transactionId,
     req.params.paymentId,
     req.params.businessId,
-    req.user.id
+    req.user.id,
+    costOptions(req)
   );
 
   return sendSuccess(res, {
@@ -149,7 +155,7 @@ const createReturnController = asyncHandler(async (req, res) => {
     refundMethod,
     reason,
     processedById: req.user.id,
-  });
+  }, costOptions(req));
 
   return sendSuccess(res, {
     message: "Return recorded",

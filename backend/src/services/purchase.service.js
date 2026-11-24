@@ -62,6 +62,12 @@ const get = async (tx, businessId, id) => {
   if (!o) throw new AppError('Purchase order not found', 404);
   return o;
 };
+const isSerializationConflict = (e) =>
+  e?.code === 'P2034' ||
+  e?.meta?.code === '40001' ||
+  e?.meta?.driverAdapterError?.cause?.originalCode === '40001' ||
+  e?.meta?.driverAdapterError?.cause?.kind === 'TransactionWriteConflict';
+
 // Serializable receipt/edit transactions avoid concurrent over-receiving and
 // stale drafts. Retry only serialization conflicts; all other failures surface.
 async function atomic(fn) {
@@ -72,7 +78,7 @@ async function atomic(fn) {
         timeout: 15000
       });
     } catch (e) {
-      if (e.code !== 'P2034' || n === 2) throw e;
+      if (!isSerializationConflict(e) || n === 2) throw e;
     }
   }
 }
@@ -342,13 +348,16 @@ exports.receive = (businessId, id, data, actor) => atomic(async tx => {
   }
   if (!['ORDERED', 'PARTIALLY_RECEIVED'].includes(o.status)) throw new AppError('Only ordered purchases can be received', 409);
   await lock(tx, o, data.version);
-  if (!(await tx.warehouse.findFirst({
-    where: {
-      id: o.warehouseId,
-      businessId,
-      deletedAt: null
-    }
-  }))) throw new AppError('The receiving warehouse is no longer active', 409);
+  // Join the same Warehouse FOR NO KEY UPDATE lock protocol used by manual
+  // stock writers so concurrent warehouse deletion cannot race purchase receipt.
+  const lockedWarehouses = await tx.$queryRaw`
+    SELECT id, "deletedAt" FROM "Warehouse"
+    WHERE id = ${o.warehouseId} AND "businessId" = ${businessId}
+    FOR NO KEY UPDATE
+  `;
+  if (!lockedWarehouses.length || lockedWarehouses[0].deletedAt) {
+    throw new AppError('The receiving warehouse is no longer active', 409);
+  }
   const receipt = await tx.purchaseReceipt.create({
     data: {
       orderId: id,
@@ -417,6 +426,7 @@ exports.receive = (businessId, id, data, actor) => atomic(async tx => {
         toWarehouseId: o.warehouseId,
         productId: item.productId,
         quantity: line.quantity,
+        batchId: receipt.id,
         type: 'RESTOCK',
         status: 'COMPLETED',
         movedById: actor.id,

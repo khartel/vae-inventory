@@ -10,6 +10,9 @@ const {
 } = require("../services/customer.service");
 const { sendSuccess } = require("../utils/response.utils");
 const asyncHandler = require("../utils/asyncHandler");
+const { canViewCostPrice } = require("../utils/transactionResponse");
+
+const costOptions = (req) => ({ includeCostPrice: canViewCostPrice(req.businessRole) });
 
 /**
  * POST /api/businesses/:businessId/customers
@@ -55,7 +58,7 @@ const getAll = asyncHandler(async (req, res) => {
  * Fetches a single customer's details by id, scoped to the business.
  */
 const getOne = asyncHandler(async (req, res) => {
-  const customer = await getCustomerById(req.params.customerId, req.params.businessId);
+  const customer = await getCustomerById(req.params.customerId, req.params.businessId, costOptions(req));
 
   return sendSuccess(res, {
     message: "Customer fetched successfully",
@@ -112,7 +115,7 @@ const getDeleted = asyncHandler(async (req, res) => {
  * Restores a soft-deleted customer back into the directory.
  */
 const restore = asyncHandler(async (req, res) => {
-  const customer = await restoreCustomer(req.params.customerId, req.params.businessId, req.user.id);
+  const customer = await restoreCustomer(req.params.customerId, req.params.businessId, req.user.id, costOptions(req));
 
   return sendSuccess(res, {
     message: "Customer restored successfully",
@@ -131,7 +134,8 @@ const merge = asyncHandler(async (req, res) => {
     req.params.customerId,
     req.body.intoCustomerId,
     req.params.businessId,
-    req.user.id
+    req.user.id,
+    costOptions(req)
   );
 
   return sendSuccess(res, {

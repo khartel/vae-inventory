@@ -9,11 +9,13 @@ const {
   receiveStock,
   getAllStock,
   moveStock,
+  moveStockBatch,
   getStockMovements,
   adjustStock,
 } = require("../services/product.service");
 const { sendSuccess } = require("../utils/response.utils");
 const asyncHandler = require("../utils/asyncHandler");
+const { canViewCostPrice } = require("../utils/transactionResponse");
 
 /**
  * POST /api/businesses/:businessId/products
@@ -47,7 +49,7 @@ const create = asyncHandler(async (req, res) => {
  * Lists every product in the business's catalog.
  */
 const getAll = asyncHandler(async (req, res) => {
-  const includeCostPrice = ["SUPERADMIN", "ADMIN"].includes(req.businessRole);
+  const includeCostPrice = canViewCostPrice(req.businessRole);
   const products = await getProducts(req.params.businessId, { includeCostPrice });
 
   return sendSuccess(res, {
@@ -61,7 +63,7 @@ const getAll = asyncHandler(async (req, res) => {
  * Fetches a single product's details by id, scoped to the business.
  */
 const getOne = asyncHandler(async (req, res) => {
-  const includeCostPrice = ["SUPERADMIN", "ADMIN"].includes(req.businessRole);
+  const includeCostPrice = canViewCostPrice(req.businessRole);
   const product = await getProductById(
     req.params.productId,
     req.params.businessId,
@@ -198,6 +200,15 @@ const moveStockBetweenWarehouses = asyncHandler(async (req, res) => {
   });
 });
 
+/** POST /stock/move-bulk — commit all product lines as one transfer. */
+const moveStockBatchController = asyncHandler(async (req, res) => {
+  const { fromWarehouseId, toWarehouseId, items, notes } = req.body;
+  const result = await moveStockBatch({
+    businessId: req.params.businessId, fromWarehouseId, toWarehouseId, items, notes, movedById: req.user.id,
+  });
+  return sendSuccess(res, { message: "Stock moved successfully", data: result, statusCode: 201 });
+});
+
 /**
  * GET /api/businesses/:businessId/stock/movements
  * Get stock movement history
@@ -247,6 +258,7 @@ module.exports = {
   receiveStockController,
   getStock,
   moveStockBetweenWarehouses,
+  moveStockBatchController,
   getMovements,
   adjustStockController,
 };

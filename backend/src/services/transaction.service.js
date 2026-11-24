@@ -2,6 +2,7 @@ const prisma = require("../utils/prisma");
 const AppError = require("../utils/AppError");
 const { recordAudit } = require("../utils/auditLog");
 const { computeCreditStats, withCreditStats } = require("../utils/creditBalance");
+const { withTransactionCostVisibility } = require("../utils/transactionResponse");
 const { startOfDay, endOfDay, startOfWeek, startOfMonth } = require("date-fns");
 const { parseCalendarDate } = require("../utils/parseDate");
 
@@ -35,6 +36,17 @@ const TRANSACTION_INCLUDE = {
     },
     orderBy: { createdAt: "asc" },
   },
+};
+
+// Every ledger mutation takes this lock before reading payments or returns.
+// Scoping the lock itself avoids touching another business's sale.
+const lockTransaction = async (tx, transactionId, businessId) => {
+  const rows = await tx.$queryRaw`
+    SELECT id FROM "Transaction"
+    WHERE id = ${transactionId} AND "businessId" = ${businessId}
+    FOR UPDATE
+  `;
+  if (!rows.length) throw new AppError("Transaction not found", 404);
 };
 
 /**
@@ -79,6 +91,7 @@ const TRANSACTION_INCLUDE = {
  * @param {number} [params.amountTendered] - What the customer physically
  *   handed over; only meaningful (and only stored) for CASH sales. Ignored
  *   for TRANSFER/CREDIT. When given, `changeGiven` is derived from it.
+ * @param {{includeCostPrice?: boolean}} [options] - Manager-only response option; costs are hidden by default.
  * @returns {Promise<object>} The created transaction with computed
  *   `amountPaid`/`balanceDue` (see `withCreditStats`).
  * @throws {AppError} If there's no primary warehouse, a product isn't
@@ -94,7 +107,7 @@ const createTransaction = async ({
   items,
   notes,
   amountTendered,
-}) => {
+}, options = {}) => {
   // Get the primary warehouse for this business
   const primaryWarehouse = await prisma.warehouse.findFirst({
     where: {
@@ -271,7 +284,7 @@ const createTransaction = async ({
     });
   });
 
-  return withCreditStats(transaction);
+  return withTransactionCostVisibility(withCreditStats(transaction), options);
 };
 
 /**
@@ -290,6 +303,7 @@ const createTransaction = async ({
  * @param {string|Date} [params.endDate] - Treated as inclusive through end of that day.
  * @param {number} [params.page=1]
  * @param {number} [params.limit=20]
+ * @param {{includeCostPrice?: boolean}} [options] - Manager-only response option; costs are hidden by default.
  * @returns {Promise<{transactions: object[], pagination: object}>}
  */
 const getTransactions = async ({
@@ -301,7 +315,7 @@ const getTransactions = async ({
   endDate,
   page = 1,
   limit = 20,
-}) => {
+}, options = {}) => {
   // Build filter
   const where = { businessId };
 
@@ -348,7 +362,7 @@ const getTransactions = async ({
   });
 
   return {
-    transactions: transactions.map(withCreditStats),
+    transactions: transactions.map((transaction) => withTransactionCostVisibility(withCreditStats(transaction), options)),
     pagination: {
       total,
       page,
@@ -363,10 +377,11 @@ const getTransactions = async ({
  *
  * @param {string} transactionId
  * @param {string} businessId - Scopes the lookup to this business.
+ * @param {{includeCostPrice?: boolean}} [options] - Manager-only response option; costs are hidden by default.
  * @returns {Promise<object>}
  * @throws {AppError} 404 if not found in this business.
  */
-const getTransactionById = async (transactionId, businessId) => {
+const getTransactionById = async (transactionId, businessId, options = {}) => {
   const transaction = await prisma.transaction.findFirst({
     where: {
       id: transactionId,
@@ -379,7 +394,7 @@ const getTransactionById = async (transactionId, businessId) => {
     throw new AppError("Transaction not found", 404);
   }
 
-  return withCreditStats(transaction);
+  return withTransactionCostVisibility(withCreditStats(transaction), options);
 };
 
 /**
@@ -395,16 +410,18 @@ const getTransactionById = async (transactionId, businessId) => {
  * @param {string} businessId - Scopes the lookup to this business.
  * @param {{amount: number, recordedById: string}} payment - Amount must be
  *   > 0 and not exceed the outstanding balance (with a small tolerance).
+ * @param {{includeCostPrice?: boolean}} [options] - Manager-only response option; costs are hidden by default.
  * @returns {Promise<object>} The updated transaction with refreshed credit stats.
  * @throws {AppError} 404 if not found; error if not a CREDIT sale, already
  *   fully paid, amount <= 0, or amount exceeds the outstanding balance.
  */
-const recordCreditPayment = async (transactionId, businessId, { amount, recordedById }) => {
+const recordCreditPayment = async (transactionId, businessId, { amount, recordedById }, options = {}) => {
   if (amount <= 0) {
     throw new AppError("Payment amount must be greater than 0");
   }
 
   const updated = await prisma.$transaction(async (tx) => {
+    await lockTransaction(tx, transactionId, businessId);
     const transaction = await tx.transaction.findFirst({
       where: { id: transactionId, businessId },
       include: {
@@ -444,7 +461,7 @@ const recordCreditPayment = async (transactionId, businessId, { amount, recorded
     });
   });
 
-  return withCreditStats(updated);
+  return withTransactionCostVisibility(withCreditStats(updated), options);
 };
 
 /**
@@ -460,34 +477,32 @@ const recordCreditPayment = async (transactionId, businessId, { amount, recorded
  * @param {string} paymentId - Must belong to transactionId.
  * @param {string} businessId - Scopes the lookup to this business.
  * @param {string} actorId - User undoing the payment (for the audit entry).
+ * @param {{includeCostPrice?: boolean}} [options] - Manager-only response option; costs are hidden by default.
  * @returns {Promise<object>} The updated transaction with refreshed credit stats.
  * @throws {AppError} 404 if the transaction or payment isn't found.
  */
-const undoCreditPayment = async (transactionId, paymentId, businessId, actorId) => {
-  const transaction = await prisma.transaction.findFirst({
-    where: { id: transactionId, businessId },
-  });
-
-  if (!transaction) {
-    throw new AppError("Transaction not found", 404);
-  }
-
-  const payment = await prisma.creditPayment.findFirst({
-    where: { id: paymentId, transactionId },
-  });
-
-  if (!payment) {
-    throw new AppError("Payment not found", 404);
-  }
-
+const undoCreditPayment = async (transactionId, paymentId, businessId, actorId, options = {}) => {
   const actor = await prisma.user.findUnique({ where: { id: actorId } });
 
   const updated = await prisma.$transaction(async (tx) => {
+    await lockTransaction(tx, transactionId, businessId);
+    const transaction = await tx.transaction.findFirst({
+      where: { id: transactionId, businessId },
+      include: { payments: true, returns: true },
+    });
+    const payment = transaction.payments.find((entry) => entry.id === paymentId);
+    if (!payment) throw new AppError("Payment not found", 404);
+
     await tx.creditPayment.delete({ where: { id: paymentId } });
+
+    const { balanceDue } = computeCreditStats({
+      ...transaction,
+      payments: transaction.payments.filter((entry) => entry.id !== paymentId),
+    });
 
     const result = await tx.transaction.update({
       where: { id: transactionId },
-      data: transaction.paidAt ? { paidAt: null } : {},
+      data: { paidAt: balanceDue <= 0.01 ? (transaction.paidAt ?? new Date()) : null },
       include: TRANSACTION_INCLUDE,
     });
 
@@ -504,7 +519,7 @@ const undoCreditPayment = async (transactionId, paymentId, businessId, actorId) 
     return result;
   });
 
-  return withCreditStats(updated);
+  return withTransactionCostVisibility(withCreditStats(updated), options);
 };
 
 /**
@@ -535,12 +550,13 @@ const undoCreditPayment = async (transactionId, paymentId, businessId, actorId) 
  * @param {"CASH"|"CREDIT_BALANCE"} params.refundMethod
  * @param {string} [params.reason]
  * @param {string} params.processedById
+ * @param {{includeCostPrice?: boolean}} [options] - Manager-only response option; costs are hidden by default.
  * @returns {Promise<object>} The updated transaction with refreshed credit stats.
  * @throws {AppError} 404 if the transaction or a referenced item isn't
  *   found; error if a quantity exceeds what's returnable, or the refund
  *   method isn't valid for this transaction's current state.
  */
-const createReturn = async (transactionId, businessId, { items, refundMethod, reason, processedById }) => {
+const createReturn = async (transactionId, businessId, { items, refundMethod, reason, processedById }, options = {}) => {
   // Reject duplicate transactionItemId entries in the same request so each
   // line's returnable-quantity cap can't be bypassed by repeating an item.
   const uniqueIds = new Set(items.map((item) => item.transactionItemId));
@@ -551,6 +567,7 @@ const createReturn = async (transactionId, businessId, { items, refundMethod, re
   const actor = await prisma.user.findUnique({ where: { id: processedById } });
 
   const updated = await prisma.$transaction(async (tx) => {
+    await lockTransaction(tx, transactionId, businessId);
     const transaction = await tx.transaction.findFirst({
       where: { id: transactionId, businessId },
       include: {
@@ -658,6 +675,7 @@ const createReturn = async (transactionId, businessId, { items, refundMethod, re
           movedById: processedById,
           notes: reason,
           returnId: createdReturn.id,
+          batchId: createdReturn.id,
         },
       });
     }
@@ -693,7 +711,7 @@ const createReturn = async (transactionId, businessId, { items, refundMethod, re
     return result;
   });
 
-  return withCreditStats(updated);
+  return withTransactionCostVisibility(withCreditStats(updated), options);
 };
 
 /**

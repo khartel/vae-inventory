@@ -9,7 +9,7 @@
  *  4. Body/cookie parsing.
  *  5. Route mounting (auth, business, warehouse, team, product, customer,
  *     stock, transaction, report, audit-log, and platform/superadmin routers).
- *  6. Health check endpoint.
+ *  6. Liveness and database readiness endpoints.
  *  7. 404 fallback handler.
  *  8. Global error handler (must be registered last).
  *
@@ -17,12 +17,14 @@
  * call `app.listen()` (that's expected to live in the server entry point).
  */
 const express = require("express");
+const compression = require("compression");
 const cors = require("cors");
 const helmet = require("helmet");
 const cookieParser = require("cookie-parser");
 const rateLimit = require("express-rate-limit");
 const pinoHttp = require("pino-http");
 const logger = require("./utils/logger");
+const { liveness, readiness } = require("./utils/health");
 
 // Routes
 const authRoutes = require("./routes/auth.routes");
@@ -116,6 +118,7 @@ app.use("/api/auth/forgot-password", forgotPasswordLimiter);
 // ─────────────────────────────────────────
 // GENERAL MIDDLEWARE
 // ─────────────────────────────────────────
+app.use(compression());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -140,9 +143,8 @@ app.use("/api/platform", platformRoutes);
 // HEALTH CHECK
 // ─────────────────────────────────────────
 // Simple liveness probe endpoint (used by uptime monitors / deploy checks).
-app.get("/api/health", (req, res) => {
-  res.json({ success: true, message: "Server is running" });
-});
+app.get("/api/health", liveness);
+app.get("/api/ready", readiness);
 
 // ─────────────────────────────────────────
 // 404 HANDLER

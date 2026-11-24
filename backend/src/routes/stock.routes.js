@@ -3,6 +3,7 @@ const router = express.Router({ mergeParams: true });
 const {
   getStock,
   moveStockBetweenWarehouses,
+  moveStockBatchController,
   getMovements,
   receiveStockController,
   adjustStockController,
@@ -12,6 +13,7 @@ const { authorize, belongsToBusiness } = require("../middleware/role.middleware"
 const { validate } = require("../middleware/validate.middleware");
 const {
   moveStockSchema,
+  moveStockBatchSchema,
   receiveStockSchema,
   movementsQuerySchema,
   adjustStockSchema,
@@ -39,6 +41,12 @@ router.post(
   authorize("SUPERADMIN", "ADMIN"),
   validate(moveStockSchema),
   moveStockBetweenWarehouses
+);
+router.post(
+  "/move-bulk",
+  authorize("SUPERADMIN", "ADMIN"),
+  validate(moveStockBatchSchema),
+  moveStockBatchController
 );
 router.post(
   "/receive",

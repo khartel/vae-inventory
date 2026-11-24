@@ -1,9 +1,35 @@
+const { randomUUID } = require("node:crypto");
 const prisma = require("../utils/prisma");
 const AppError = require("../utils/AppError");
 const { recordAudit } = require("../utils/auditLog");
 const { startOfDay, endOfDay } = require("date-fns");
 const { getThresholdSettings, resolveLowStockThreshold } = require("../utils/lowStockThreshold");
 const { parseCalendarDate } = require("../utils/parseDate");
+const { stripItemCostPrice } = require("../utils/transactionResponse");
+
+const isRetryableTxConflict = (error) => {
+  const pgCode =
+    error?.meta?.driverAdapterError?.cause?.originalCode ??
+    error?.meta?.code ??
+    error?.cause?.code;
+  return (
+    error?.code === "P2034" ||
+    pgCode === "40P01" ||
+    pgCode === "40001" ||
+    error?.meta?.driverAdapterError?.cause?.kind === "TransactionWriteConflict" ||
+    /deadlock detected/i.test(error?.message || "")
+  );
+};
+
+const runWithDeadlockRetry = async (fn, maxAttempts = 3) => {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt >= maxAttempts || !isRetryableTxConflict(error)) throw error;
+    }
+  }
+};
 
 /**
  * Ensure a short code isn't already used by another product in this
@@ -256,9 +282,13 @@ const getProductById = async (productId, businessId, { includeCostPrice = false 
   }));
 
   const { costPrice, ...productWithoutCost } = product;
+  const transactionItems = includeCostPrice
+    ? product.transactionItems
+    : product.transactionItems.map(stripItemCostPrice);
 
   return {
     ...(includeCostPrice ? product : productWithoutCost),
+    transactionItems,
     stock,
     totalQuantity: stock.reduce((sum, s) => sum + s.quantity, 0),
     primaryStock: stock.find((s) => s.warehouse.isPrimary) || null,
@@ -523,25 +553,34 @@ const receiveStock = async ({ businessId, warehouseId, items, movedById, notes }
     throw new AppError("One or more products were not found in this business", 404);
   }
 
-  const movements = await prisma.$transaction(async (tx) => {
-    const created = [];
+  const batchId = randomUUID();
+  const movements = await runWithDeadlockRetry(() =>
+    prisma.$transaction(async (tx) => {
+      // Lock the destination warehouse (FOR NO KEY UPDATE) and recheck active
+      // status inside the transaction so concurrent deletion cannot race with
+      // incoming stock.
+      const lockedWarehouses = await tx.$queryRaw`
+        SELECT id, "deletedAt" FROM "Warehouse"
+        WHERE id = ${warehouseId} AND "businessId" = ${businessId}
+        FOR NO KEY UPDATE
+      `;
+      if (!lockedWarehouses.length || lockedWarehouses[0].deletedAt) {
+        throw new AppError("Warehouse not found", 404);
+      }
 
-    for (const { productId, quantity, lowStockThreshold, unitLabel, unitQuantity } of items) {
-      const existingStock = await tx.warehouseStock.findUnique({
-        where: { warehouseId_productId: { warehouseId, productId } },
-      });
+      const createdByIndex = new Array(items.length);
+      const indexed = items
+        .map((item, index) => ({ item, index }))
+        .sort((a, b) => a.item.productId.localeCompare(b.item.productId));
 
-      if (existingStock) {
-        await tx.warehouseStock.update({
+      for (const { item, index } of indexed) {
+        const { productId, quantity, lowStockThreshold, unitLabel, unitQuantity } = item;
+
+        // Atomic upsert/increment so concurrent restocks or sales on the same
+        // warehouse+product row can never overwrite each other's delta.
+        await tx.warehouseStock.upsert({
           where: { warehouseId_productId: { warehouseId, productId } },
-          data: {
-            quantity: existingStock.quantity + quantity,
-            ...(lowStockThreshold !== undefined && { lowStockThreshold }),
-          },
-        });
-      } else {
-        await tx.warehouseStock.create({
-          data: {
+          create: {
             warehouseId,
             productId,
             quantity,
@@ -549,35 +588,40 @@ const receiveStock = async ({ businessId, warehouseId, items, movedById, notes }
             // governed instead by the business's live low-stock rule.
             lowStockThreshold: lowStockThreshold ?? null,
           },
+          update: {
+            quantity: { increment: quantity },
+            ...(lowStockThreshold !== undefined && { lowStockThreshold }),
+          },
         });
+
+        const movement = await tx.stockMovement.create({
+          data: {
+            businessId,
+            batchId,
+            fromWarehouseId: null,
+            toWarehouseId: warehouseId,
+            productId,
+            quantity,
+            unitLabel,
+            unitQuantity,
+            type: "RESTOCK",
+            status: "COMPLETED",
+            movedById,
+            notes,
+          },
+          include: {
+            toWarehouse: { select: { id: true, name: true } },
+            product: { select: { id: true, name: true, unit: true } },
+            movedBy: { select: { id: true, fullName: true, username: true } },
+          },
+        });
+
+        createdByIndex[index] = movement;
       }
 
-      const movement = await tx.stockMovement.create({
-        data: {
-          businessId,
-          fromWarehouseId: null,
-          toWarehouseId: warehouseId,
-          productId,
-          quantity,
-          unitLabel,
-          unitQuantity,
-          type: "RESTOCK",
-          status: "COMPLETED",
-          movedById,
-          notes,
-        },
-        include: {
-          toWarehouse: { select: { id: true, name: true } },
-          product: { select: { id: true, name: true, unit: true } },
-          movedBy: { select: { id: true, fullName: true, username: true } },
-        },
-      });
-
-      created.push(movement);
-    }
-
-    return created;
-  });
+      return createdByIndex;
+    })
+  );
 
   return movements;
 };
@@ -644,154 +688,91 @@ const getAllStock = async (businessId) => {
 };
 
 /**
- * Move a quantity of one product from one warehouse to another (an internal
- * TRANSFER, distinct from a RESTOCK). Validates the source warehouse has
- * enough quantity before moving anything. The actual move — decrementing
- * the source, incrementing (or creating) the destination stock row, and
- * logging a TRANSFER StockMovement — happens inside a single
- * `$transaction` so stock can never end up deducted from the source
- * without also landing in the destination (or vice versa).
- *
- * @param {object} params
- * @param {string} params.businessId
- * @param {string} params.fromWarehouseId
- * @param {string} params.toWarehouseId - Must differ from fromWarehouseId.
- * @param {string} params.productId
- * @param {number} params.quantity - Must be > 0 and <= current source stock.
- * @param {string} params.movedById
- * @param {string} [params.notes]
- * @returns {Promise<object>} The created StockMovement record.
- * @throws {AppError} If source/destination are the same, quantity is
- *   invalid, the product has no stock at the source, or source stock is
- *   insufficient.
+ * Transfer every product line as one atomic operation. A server-generated batch
+ * reference joins the audit lines without merging separate moves on one route.
+ * Source decrements are conditional, so concurrent moves cannot overdraw stock.
  */
-const moveStock = async ({
-  businessId,
-  fromWarehouseId,
-  toWarehouseId,
-  productId,
-  quantity,
-  movedById,
-  notes,
-}) => {
+const moveStockBatch = async ({ businessId, fromWarehouseId, toWarehouseId, items, movedById, notes }) => {
   if (fromWarehouseId === toWarehouseId) {
     throw new AppError("Cannot move stock to the same warehouse");
   }
-
-  if (quantity <= 0) {
-    throw new AppError("Quantity must be greater than 0");
+  if (!items?.length || items.some((item) => !Number.isFinite(item.quantity) || item.quantity <= 0)) {
+    throw new AppError("Add products with quantities greater than 0");
+  }
+  const productIds = items.map((item) => item.productId);
+  if (new Set(productIds).size !== productIds.length) {
+    throw new AppError("Each product can only be added once");
   }
 
-  // Verify both warehouses and the product belong to this business and are active
-  // (not soft-deleted) — belongsToBusiness only checks :businessId in the URL.
-  const [fromWarehouse, toWarehouse, product] = await Promise.all([
-    prisma.warehouse.findFirst({
-      where: { id: fromWarehouseId, businessId, deletedAt: null },
-    }),
-    prisma.warehouse.findFirst({
-      where: { id: toWarehouseId, businessId, deletedAt: null },
-    }),
-    prisma.product.findFirst({
-      where: { id: productId, businessId, deletedAt: null },
-    }),
+  const [fromWarehouse, toWarehouse, products] = await Promise.all([
+    prisma.warehouse.findFirst({ where: { id: fromWarehouseId, businessId, deletedAt: null } }),
+    prisma.warehouse.findFirst({ where: { id: toWarehouseId, businessId, deletedAt: null } }),
+    prisma.product.findMany({ where: { id: { in: productIds }, businessId, deletedAt: null } }),
   ]);
+  if (!fromWarehouse) throw new AppError("Source warehouse not found", 404);
+  if (!toWarehouse) throw new AppError("Destination warehouse not found", 404);
+  if (products.length !== productIds.length) throw new AppError("One or more products were not found in this business", 404);
 
-  if (!fromWarehouse) {
-    throw new AppError("Source warehouse not found", 404);
-  }
+  const batchId = randomUUID();
+  const [firstWarehouseId, secondWarehouseId] = [fromWarehouseId, toWarehouseId].sort();
+  const movements = await runWithDeadlockRetry(() =>
+    prisma.$transaction(async (tx) => {
+      // Acquire canonical warehouse locks (FOR NO KEY UPDATE does not block
+      // foreign-key FOR KEY SHARE checks from concurrent sales) and recheck
+      // deletedAt inside the transaction so opposing transfers serialize and
+      // cannot land in a concurrently deleted warehouse.
+      const lockedWarehouses = await tx.$queryRaw`
+        SELECT id, "deletedAt" FROM "Warehouse"
+        WHERE id IN (${firstWarehouseId}, ${secondWarehouseId}) AND "businessId" = ${businessId}
+        ORDER BY id ASC
+        FOR NO KEY UPDATE
+      `;
+      const lockedFrom = lockedWarehouses.find((w) => w.id === fromWarehouseId && !w.deletedAt);
+      const lockedTo = lockedWarehouses.find((w) => w.id === toWarehouseId && !w.deletedAt);
+      if (!lockedFrom) throw new AppError("Source warehouse not found", 404);
+      if (!lockedTo) throw new AppError("Destination warehouse not found", 404);
 
-  if (!toWarehouse) {
-    throw new AppError("Destination warehouse not found", 404);
-  }
-
-  if (!product) {
-    throw new AppError("Product not found", 404);
-  }
-
-  // Perform the stock movement atomically in a transaction so concurrent
-  // moves/sales can never drive source stock negative.
-  const result = await prisma.$transaction(async (tx) => {
-    const deducted = await tx.warehouseStock.updateMany({
-      where: {
-        warehouseId: fromWarehouseId,
-        productId,
-        quantity: { gte: quantity },
-      },
-      data: {
-        quantity: { decrement: quantity },
-      },
-    });
-
-    if (deducted.count === 0) {
-      const currentSource = await tx.warehouseStock.findUnique({
-        where: {
-          warehouseId_productId: {
-            warehouseId: fromWarehouseId,
-            productId,
+      const created = [];
+      // Consistent product order reduces contention between bulk moves and sales.
+      for (const item of [...items].sort((a, b) => a.productId.localeCompare(b.productId))) {
+        const { productId, quantity, unitLabel, unitQuantity } = item;
+        const product = products.find((entry) => entry.id === productId);
+        const deducted = await tx.warehouseStock.updateMany({
+          where: { warehouseId: fromWarehouseId, productId, quantity: { gte: quantity } },
+          data: { quantity: { decrement: quantity } },
+        });
+        if (deducted.count === 0) {
+          const stock = await tx.warehouseStock.findUnique({
+            where: { warehouseId_productId: { warehouseId: fromWarehouseId, productId } },
+          });
+          if (!stock) throw new AppError(`Product not found in source warehouse: ${product.name}`, 404);
+          throw new AppError(`Insufficient stock for ${product.name}. Available: ${stock.quantity} ${product.unit}`);
+        }
+        await tx.warehouseStock.upsert({
+          where: { warehouseId_productId: { warehouseId: toWarehouseId, productId } },
+          create: { warehouseId: toWarehouseId, productId, quantity },
+          update: { quantity: { increment: quantity } },
+        });
+        created.push(await tx.stockMovement.create({
+          data: { businessId, batchId, fromWarehouseId, toWarehouseId, productId, quantity, unitLabel, unitQuantity, movedById, notes, type: "TRANSFER", status: "COMPLETED" },
+          include: {
+            fromWarehouse: { select: { id: true, name: true } },
+            toWarehouse: { select: { id: true, name: true } },
+            product: { select: { id: true, name: true, unit: true } },
+            movedBy: { select: { id: true, fullName: true, username: true } },
           },
-        },
-      });
-
-      if (!currentSource) {
-        throw new AppError("Product not found in source warehouse", 404);
+        }));
       }
+      return created;
+    }, { timeout: 30000 })
+  );
+  return { batchId, movements };
+};
 
-      throw new AppError(
-        `Insufficient stock. Available: ${currentSource.quantity} ${product.unit}`
-      );
-    }
-
-    // Add to destination warehouse atomically
-    await tx.warehouseStock.upsert({
-      where: {
-        warehouseId_productId: {
-          warehouseId: toWarehouseId,
-          productId,
-        },
-      },
-      create: {
-        warehouseId: toWarehouseId,
-        productId,
-        quantity,
-      },
-      update: {
-        quantity: { increment: quantity },
-      },
-    });
-
-    // Record the movement
-    const movement = await tx.stockMovement.create({
-      data: {
-        businessId,
-        fromWarehouseId,
-        toWarehouseId,
-        productId,
-        quantity,
-        movedById,
-        notes,
-        type: "TRANSFER",
-        status: "COMPLETED",
-      },
-      include: {
-        fromWarehouse: {
-          select: { id: true, name: true },
-        },
-        toWarehouse: {
-          select: { id: true, name: true },
-        },
-        product: {
-          select: { id: true, name: true, unit: true },
-        },
-        movedBy: {
-          select: { id: true, fullName: true, username: true },
-        },
-      },
-    });
-
-    return movement;
-  });
-
-  return result;
+/** Preserve the original single-product API for existing callers. */
+const moveStock = async ({ productId, quantity, ...operation }) => {
+  const result = await moveStockBatch({ ...operation, items: [{ productId, quantity }] });
+  return result.movements[0];
 };
 
 /**
@@ -837,28 +818,45 @@ const adjustStock = async ({ businessId, warehouseId, productId, actualQuantity,
     throw new AppError("Product not found", 404);
   }
 
-  const existingStock = await prisma.warehouseStock.findUnique({
-    where: { warehouseId_productId: { warehouseId, productId } },
-  });
-  const previousQuantity = existingStock?.quantity ?? 0;
-
-  if (actualQuantity === previousQuantity) {
-    throw new AppError("Actual count already matches the system count — nothing to adjust");
-  }
-
   const actor = await prisma.user.findUnique({ where: { id: adjustedById } });
 
   const movement = await prisma.$transaction(async (tx) => {
-    if (existingStock) {
-      await tx.warehouseStock.update({
-        where: { warehouseId_productId: { warehouseId, productId } },
-        data: { quantity: actualQuantity },
-      });
-    } else {
-      await tx.warehouseStock.create({
-        data: { warehouseId, productId, quantity: actualQuantity },
-      });
+    // Lock the warehouse (FOR NO KEY UPDATE) and recheck active status inside
+    // the transaction so concurrent deletion cannot race with an adjustment.
+    const lockedWarehouses = await tx.$queryRaw`
+      SELECT id, "deletedAt" FROM "Warehouse"
+      WHERE id = ${warehouseId} AND "businessId" = ${businessId}
+      FOR NO KEY UPDATE
+    `;
+    if (!lockedWarehouses.length || lockedWarehouses[0].deletedAt) {
+      throw new AppError("Warehouse not found", 404);
     }
+
+    // Ensure the WarehouseStock row exists before locking it FOR UPDATE so an
+    // initial adjustment on a missing row cannot miss a concurrent receipt.
+    // Deliberately avoids locking Product so lock ordering never inverts
+    // against purchase receiving (WarehouseStock -> Product). Throwing on a
+    // no-op rolls back any inserted 0-quantity row automatically.
+    await tx.$executeRaw`
+      INSERT INTO "WarehouseStock" (id, "warehouseId", "productId", quantity, "updatedAt")
+      VALUES (${randomUUID()}, ${warehouseId}, ${productId}, 0, NOW())
+      ON CONFLICT ("warehouseId", "productId") DO NOTHING
+    `;
+    const lockedRows = await tx.$queryRaw`
+      SELECT id, quantity FROM "WarehouseStock"
+      WHERE "warehouseId" = ${warehouseId} AND "productId" = ${productId}
+      FOR UPDATE
+    `;
+    const previousQuantity = Number(lockedRows[0].quantity);
+
+    if (actualQuantity === previousQuantity) {
+      throw new AppError("Actual count already matches the system count — nothing to adjust");
+    }
+
+    await tx.warehouseStock.update({
+      where: { warehouseId_productId: { warehouseId, productId } },
+      data: { quantity: actualQuantity },
+    });
 
     const created = await tx.stockMovement.create({
       data: {
@@ -961,6 +959,7 @@ module.exports = {
   receiveStock,
   getAllStock,
   moveStock,
+  moveStockBatch,
   getStockMovements,
   adjustStock,
 };

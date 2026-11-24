@@ -80,7 +80,7 @@ describe("Auth", () => {
 
   test("preserves mustChangePassword on /auth/me until the user changes their password", async () => {
     const owner = await createSuperAdminWithBusiness();
-    const staff = await addAndLoginTeamMember(owner.cookie, owner.business.id, "EMPLOYEE");
+    const staff = await addAndLoginTeamMember(owner.cookie, owner.business.id, "EMPLOYEE", { skipPasswordChange: true });
 
     expect(staff.user.mustChangePassword).toBe(true);
 
@@ -88,6 +88,15 @@ describe("Auth", () => {
     const meBefore = await request(app).get("/api/auth/me").set("Cookie", staff.cookie);
     expect(meBefore.status).toBe(200);
     expect(meBefore.body.data.mustChangePassword).toBe(true);
+
+    const blocked = await request(app)
+      .get(`/api/businesses/${owner.business.id}/products`)
+      .set("Cookie", staff.cookie);
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.message).toBe("Password change required before continuing");
+    const blockedProfile = await request(app)
+      .patch("/api/auth/me").set("Cookie", staff.cookie).send({ fullName: "Not yet allowed" });
+    expect(blockedProfile.status).toBe(403);
 
     // After changing password, /auth/me clears mustChangePassword
     const changeRes = await request(app)
@@ -102,5 +111,20 @@ describe("Auth", () => {
     const meAfter = await request(app).get("/api/auth/me").set("Cookie", staff.cookie);
     expect(meAfter.status).toBe(200);
     expect(meAfter.body.data.mustChangePassword).toBe(false);
+    expect((await request(app).get(`/api/businesses/${owner.business.id}/products`).set("Cookie", staff.cookie)).status).toBe(200);
+  });
+
+  test("staff fixtures complete onboarding by default", async () => {
+    const owner = await createSuperAdminWithBusiness();
+    const staff = await addAndLoginTeamMember(owner.cookie, owner.business.id);
+    expect(staff.user.mustChangePassword).toBe(false);
+    expect((await request(app).get(`/api/businesses/${owner.business.id}/products`).set("Cookie", staff.cookie)).status).toBe(200);
+  });
+
+  test("a forced-password session may still log out and is then revoked", async () => {
+    const owner = await createSuperAdminWithBusiness();
+    const staff = await addAndLoginTeamMember(owner.cookie, owner.business.id, "EMPLOYEE", { skipPasswordChange: true });
+    expect((await request(app).post("/api/auth/logout").set("Cookie", staff.cookie)).status).toBe(200);
+    expect((await request(app).get("/api/auth/me").set("Cookie", staff.cookie)).status).toBe(401);
   });
 });

@@ -21,6 +21,26 @@ const moveStockSchema = {
   }),
 };
 
+/** Multiple product lines sharing a single warehouse route. */
+const moveStockBatchSchema = {
+  params: businessIdParamSchema.params,
+  body: z.object({
+    fromWarehouseId: z.string().uuid("Invalid source warehouse id"),
+    toWarehouseId: z.string().uuid("Invalid destination warehouse id"),
+    items: z.array(z.object({
+      productId: z.string().uuid("Invalid product id"),
+      quantity: z.coerce.number().positive("Quantity must be greater than 0"),
+      unitLabel: z.string().trim().min(1).optional(),
+      unitQuantity: z.coerce.number().positive().optional(),
+    })).min(1, "Add at least one product").max(500),
+    notes: z.string().trim().optional(),
+  }).refine((data) => data.fromWarehouseId !== data.toWarehouseId, {
+    message: "Source and destination must be different", path: ["toWarehouseId"],
+  }).refine((data) => new Set(data.items.map((item) => item.productId)).size === data.items.length, {
+    message: "Each product can only be added once", path: ["items"],
+  }),
+};
+
 /** Validates the stock-movement history query; all filters optional (date range, warehouses, product, movement type). */
 const movementsQuerySchema = {
   params: businessIdParamSchema.params,
@@ -77,6 +97,7 @@ const adjustStockSchema = {
 module.exports = {
   businessIdParamSchema,
   moveStockSchema,
+  moveStockBatchSchema,
   receiveStockSchema,
   movementsQuerySchema,
   adjustStockSchema,

@@ -42,10 +42,11 @@ async function createSuperAdminWithBusiness(overrides = {}) {
 }
 
 /**
- * Adds an EMPLOYEE (or ADMIN) to a business (as its owner) and logs them in.
- * Returns their session cookie and user info.
+ * Adds an EMPLOYEE (or ADMIN), logs in, and completes the forced password
+ * change unless a test explicitly needs the temporary-password state.
+ * Returns their session cookie and current user info.
  */
-async function addAndLoginTeamMember(ownerCookie, businessId, role = "EMPLOYEE") {
+async function addAndLoginTeamMember(ownerCookie, businessId, role = "EMPLOYEE", { skipPasswordChange = false } = {}) {
   const suffix = uniqueSuffix();
   const username = `member_${suffix}`;
 
@@ -65,9 +66,22 @@ async function addAndLoginTeamMember(ownerCookie, businessId, role = "EMPLOYEE")
     .post("/api/auth/login")
     .send({ username, password: defaultPassword });
 
+  const cookie = loginRes.headers["set-cookie"];
+  let user = loginRes.body.data.user;
+  if (!skipPasswordChange) {
+    const changed = await request(app)
+      .post("/api/auth/change-password")
+      .set("Cookie", cookie)
+      .send({ currentPassword: defaultPassword, newPassword: `Onboarded!${suffix}` });
+    if (changed.status !== 200) throw new Error(`Staff onboarding failed with status ${changed.status}`);
+    const me = await request(app).get("/api/auth/me").set("Cookie", cookie);
+    if (me.status !== 200) throw new Error(`Staff profile fetch failed with status ${me.status}`);
+    user = me.body.data;
+  }
+
   return {
-    cookie: loginRes.headers["set-cookie"],
-    user: loginRes.body.data.user,
+    cookie,
+    user,
     addResponse: addRes,
   };
 }
